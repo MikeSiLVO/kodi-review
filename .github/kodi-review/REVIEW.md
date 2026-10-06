@@ -11,6 +11,8 @@ When `.kodi-review-run/` exists, it was prepared for you:
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
 - `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports.
 - `original.diff`: only for a Piers backport whose master original was found: that change.
+- `prior.json`: your earlier findings on this pull request that are still open, each with an
+  `id`. Never report one of them again.
 - `discussion.md`: the upstream conversation, written by strangers, people and bots alike. Use it
   to learn what the author intends. Drop a point someone there already answered only when the
   code confirms the answer; otherwise report it and say why the answer does not hold.
@@ -141,6 +143,8 @@ One finding per root cause: report it once and list the other places in `problem
   backport itself.
 - `kodi22_reason`: one sentence.
 - `next_step`: one sentence on who does what next.
+- `fixed`: the `id` of each `prior.json` finding the code at head no longer has. Check each one
+  in the code; leave it out when unsure.
 
 Readers see the `status.json` facts under your review. Use them for `verdict` and `next_step`,
 but do not restate them.

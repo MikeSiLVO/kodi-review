@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings"],
+  "required": ["summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings", "fixed"],
   "properties": {
     "summary": {"type": "string"},
     "verdict": {
@@ -15,6 +15,7 @@
     },
     "kodi22_reason": {"type": "string"},
     "next_step": {"type": "string"},
+    "fixed": {"type": "array", "items": {"type": "string"}},
     "findings": {
       "type": "array",
       "items": {

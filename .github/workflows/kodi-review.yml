@@ -155,6 +155,7 @@ jobs:
           done
           gh pr diff "$FORK_PR" --repo "$GITHUB_REPOSITORY" > .kodi-review-run/full.diff
           prev=$(python3 "$BOT/review.py" prev)
+          python3 "$BOT/review.py" prior || echo "Earlier findings unavailable"
           if [ -n "$prev" ] && [ "$prev" != "$HEAD_SHA" ]; then
             gh api -H "Accept: application/vnd.github.diff" \
               "repos/$GITHUB_REPOSITORY/compare/$prev...$HEAD_SHA" > .kodi-review-run/new.diff \

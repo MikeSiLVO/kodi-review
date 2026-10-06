@@ -35,6 +35,17 @@ MENTION = re.compile(r"(?<![\w/])@(?=[A-Za-z0-9])")
 CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_")
 WITHHELD = ("Withheld: the review output contained something that looks like a credential. "
             "Check the run.")
+BOT_LOGIN = "github-actions"
+PRIOR_SEVERITY = re.compile(r"^\*\*(Serious|Moderate|Minor)\b")
+THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } }
+}}}}"""
+RESOLVE_MUTATION = """mutation($id: ID!) {
+  resolveReviewThread(input: {threadId: $id}) { thread { isResolved } }
+}"""
 
 
 def request(method, path, body=None, raw=False) -> Any:
@@ -321,6 +332,48 @@ def load_result():
     return result
 
 
+def graphql(query, **variables):
+    """Run a GitHub GraphQL query or mutation and return its data."""
+    reply = request("POST", "/graphql", {"query": query, "variables": variables})
+    if reply.get("errors"):
+        raise RuntimeError(reply["errors"])
+    return reply["data"]
+
+
+def open_findings(threads):
+    """Return the bot's unresolved threads that nobody else replied to, as earlier findings."""
+    return [{"id": t["id"], "path": t["path"], "line": t["line"],
+             "finding": t["comments"]["nodes"][0]["body"]}
+            for t in threads if not t["isResolved"] and t["comments"]["nodes"]
+            and all((c["author"] or {}).get("login") == BOT_LOGIN
+                    for c in t["comments"]["nodes"])]
+
+
+def cmd_prior():
+    """Write the bot's open findings on the mirrored pull request to prior.json."""
+    owner, name = REPO.split("/")
+    threads, after = [], None
+    while True:
+        data = graphql(THREADS_QUERY, owner=owner, name=name,
+                       number=int(os.environ["FORK_PR"]), after=after)
+        page = data["repository"]["pullRequest"]["reviewThreads"]
+        threads += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "prior.json").write_text(json.dumps(open_findings(threads), indent=1) + "\n")
+
+
+def load_prior():
+    """Load the open findings the prep step listed, or none."""
+    try:
+        prior = json.loads((RUN_DIR / "prior.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return prior if isinstance(prior, list) else []
+
+
 def load_status():
     """Load the status facts, or an empty dict when the status step wrote nothing usable."""
     try:
@@ -444,15 +497,22 @@ def verdict_line(result, status):
     return f"{verdict} · {len(findings)} problem{plural} ({detail})"
 
 
-def summary_text(result, status, head, loose, rerun):
+def summary_text(result, status, head, loose, rerun, resolved=0, still_open=()):
     """Format the summary comment, verdict as a heading and the Where it stands facts as a list."""
-    parts = [f"### {verdict_line(result, status)}\n{result['summary']}"]
+    counted = dict(result, findings=result["findings"] + list(still_open))
+    parts = [f"### {verdict_line(counted, status)}\n{result['summary']}"]
     if loose:
         parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
     parts.append("---")
     lines = status_lines(status, result)
     parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
-    parts.append(f"<sub>Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}.</sub>")
+    footer = f"Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}."
+    if resolved:
+        footer += f" Resolved {resolved} earlier finding{'s' if resolved != 1 else ''}."
+    if still_open:
+        footer += f" {len(still_open)} earlier finding{'s' if len(still_open) != 1 else ''}"
+        footer += " still open."
+    parts.append(f"<sub>{footer}</sub>")
     return "\n\n".join(parts)
 
 
@@ -467,7 +527,7 @@ def upsert_summary(sha, text):
 
 
 def cmd_post():
-    """Post findings inline or in the summary comment, or note a failure; exit 1 on a credential."""
+    """Post findings, resolve fixed earlier ones, or note a failure; exit 1 on a credential."""
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
@@ -477,7 +537,13 @@ def cmd_post():
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
-    summary = unlinked(summary_text(result, load_status(), head, loose, rerun))
+    prior = load_prior()
+    listed = {f.get("id") for f in prior}
+    fixed = [tid for tid in dict.fromkeys(result.get("fixed") or []) if tid in listed]
+    still_open = [{"severity": m.group(1)} for f in prior if f.get("id") not in fixed
+                  and (m := PRIOR_SEVERITY.match(f.get("finding") or ""))]
+    summary = unlinked(summary_text(result, load_status(), head, loose, rerun, len(fixed),
+                                    still_open))
     for comment in inline:
         comment["body"] = unlinked(comment["body"])
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
@@ -487,6 +553,8 @@ def cmd_post():
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})
     upsert_summary(head, summary)
+    for tid in fixed:
+        graphql(RESOLVE_MUTATION, id=tid)
 
 
 def cmd_render():
@@ -497,7 +565,7 @@ def cmd_render():
     print(unlinked(summary_text(result, status, status.get("head", ""), loose, False)))
 
 
-COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status,
+COMMANDS = {"prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers, "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render}
 
 if __name__ == "__main__":

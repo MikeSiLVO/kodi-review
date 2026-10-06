@@ -286,6 +286,42 @@ class DiscussionTests(unittest.TestCase):
         self.assertEqual(review.discussion_text(comments).count("dev, "), 2)
 
 
+class PriorTests(unittest.TestCase):
+    """Earlier findings: which stay open and which get resolved."""
+
+    def thread(self, tid, logins, resolved=False):
+        """Return a review thread shaped like the GraphQL reviewThreads nodes."""
+        return {"id": tid, "isResolved": resolved, "path": "a.cpp", "line": 3,
+                "comments": {"nodes": [{"author": {"login": login}, "body": f"by {login}"}
+                                       for login in logins]}}
+
+    def test_open_findings(self):
+        """Only the bot's unresolved threads without a reply from anyone else count."""
+        threads = [self.thread("T1", ["github-actions"]),
+                   self.thread("T2", ["github-actions"], resolved=True),
+                   self.thread("T3", ["github-actions", "MikeSiLVO"]),
+                   self.thread("T4", ["someone"])]
+        self.assertEqual([f["id"] for f in review.open_findings(threads)], ["T1"])
+
+    def test_post_resolves_listed_only(self):
+        """Only listed fixed ids are resolved, once each; open ones still count in the verdict."""
+        result = dict(RESULT, fixed=["T1", "T9", "T1"])
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=[]), \
+                mock.patch.object(review, "load_prior", return_value=[
+                    {"id": "T1", "finding": "**Minor: A**"},
+                    {"id": "T2", "finding": "**Moderate:** B"}]), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.object(review, "graphql") as graphql, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}):
+            review.cmd_post()
+        graphql.assert_called_once_with(review.RESOLVE_MUTATION, id="T1")
+        body = request.call_args.args[2]["body"]
+        self.assertIn("Resolved 1 earlier finding. 1 earlier finding still open.", body)
+        self.assertIn("### Needs more work · 1 problem (Moderate)", body)
+
+
 class WithheldTests(unittest.TestCase):
     """Review output that looks like it carries a credential."""
 
