@@ -187,8 +187,8 @@ class UnlinkedTests(unittest.TestCase):
 
     def test_post_unlinks(self):
         """The summary and line comments are posted with mentions and numbers unlinked."""
-        finding = {"path": "a.cpp", "line": 2, "severity": "Minor", "problem": "Ask @a.",
-                   "fix": "See #12345."}
+        finding = {"path": "a.cpp", "line": 2, "severity": "Minor", "title": "Typo",
+                   "problem": "Ask @a.", "fix": "See #12345."}
         result = dict(RESULT, summary="Since xbmc/xbmc#24720.", findings=[finding])
         files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n z"}]
         with mock.patch.object(review, "summary_comment", return_value=None), \
@@ -202,6 +202,13 @@ class UnlinkedTests(unittest.TestCase):
         self.assertIn("Ask @​a.", line_comment)
         self.assertIn("See PR 12345.", line_comment)
         self.assertIn("Since upstream PR 24720.", summary)
+
+    def test_finding_title(self):
+        """A finding opens with its severity and title in bold, then the detail and the fix."""
+        finding = {"severity": "Moderate", "title": "3D output breaks", "problem": "Both eyes.",
+                   "fix": "Skip the cache."}
+        self.assertEqual(review.finding_text(finding),
+                         "**Moderate: 3D output breaks**\n\nBoth eyes.\n\n**Fix:** Skip the cache.")
 
 
 class DiscussionTests(unittest.TestCase):

@@ -20,11 +20,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["path", "line", "severity", "problem", "fix"],
+        "required": ["path", "line", "severity", "title", "problem", "fix"],
         "properties": {
           "path": {"type": "string"},
           "line": {"type": "integer", "minimum": 1},
           "severity": {"type": "string", "enum": ["Serious", "Moderate", "Minor"]},
+          "title": {"type": "string", "maxLength": 80},
           "problem": {"type": "string"},
           "fix": {"type": "string"}
         }

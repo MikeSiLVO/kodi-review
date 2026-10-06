@@ -337,8 +337,9 @@ def unlinked(text):
 
 
 def finding_text(finding):
-    """Format one finding as comment markdown."""
-    return f"**{finding['severity']}:** {finding['problem']}\n\n**Fix:** {finding['fix']}"
+    """Format one finding as comment markdown, its title in bold above the detail."""
+    return (f"**{finding['severity']}: {finding['title']}**\n\n{finding['problem']}\n\n"
+            f"**Fix:** {finding['fix']}")
 
 
 def reviewer_text(review):

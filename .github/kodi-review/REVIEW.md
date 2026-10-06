@@ -109,6 +109,8 @@ survives.
 - `severity`: `Serious` only for a verified, reachable crash, data loss, security hole, build
   break, or a change that does not work. Maintainers use it as a merge gate, so never inflate it.
   `Moderate` (wrong behavior users can hit, a regression), `Minor` (spelling, small real defect).
+- `title`: the effect a user or developer sees, under 80 characters, such as "3D output breaks
+  with an HQ scaler". No file or function names unless the effect is a build break.
 - `problem`: what goes wrong and for whom, in one to three plain sentences.
 - `fix`: the concrete change, checked against the code. A short snippet is fine.
 
