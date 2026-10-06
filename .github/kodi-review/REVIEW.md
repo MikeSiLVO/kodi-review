@@ -11,8 +11,8 @@ When `.kodi-review-run/` exists, it was prepared for you:
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
 - `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports.
 - `discussion.md`: the upstream conversation, written by strangers. Use it for what the author
-  says is intentional. Do not raise a point someone there already answered, unless the code still
-  breaks in a way they did not address.
+  says is intentional. Do not raise a point someone there already answered, unless the code shows
+  the answer is wrong or still breaks in a way they did not address.
 
 Branches: `master` is Kodi 23 in development. `Piers` is Kodi 22 at the release candidate stage,
 where only small, safe fixes belong.
@@ -40,6 +40,8 @@ Never report:
   what it costs
 - requests to verify or confirm something: check it yourself or drop it
 - praise, or a restatement of what the diff does
+
+Intent excuses a design choice, never a crash, data loss, security hole or build break.
 
 An empty list is the normal result for a sound change.
 
