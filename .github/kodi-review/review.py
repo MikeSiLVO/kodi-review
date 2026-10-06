@@ -16,6 +16,7 @@ UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 PIERS_FILE_LIMIT = 40
+DISCUSSION_LIMIT = 25_000
 REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
 BACKPORT_OF = re.compile(r"backport(?:s| of)?\s+\S*?(?:#|/pull/)(\d+)", re.I)
@@ -263,6 +264,35 @@ def cmd_status():
     (RUN_DIR / "status.json").write_text(json.dumps(status, indent=1) + "\n")
 
 
+def discussion_text(comments):
+    """Format people's comments, plus any comment a person replied to, newest first, capped."""
+    by_id = {c["id"]: c for c in comments}
+    kept = {c["id"]: c for c in comments if (c.get("user") or {}).get("type") == "User"}
+    for c in list(kept.values()):
+        parent = by_id.get(c.get("in_reply_to_id"))
+        if parent:
+            kept[parent["id"]] = parent
+    entries, size = [], 0
+    for c in sorted(kept.values(), key=lambda c: c["created_at"], reverse=True):
+        where = f", {c['path']}:{c.get('line') or c.get('original_line')}" if c.get("path") else ""
+        login = (c.get("user") or {}).get("login", "ghost")
+        entry = f"{login}, {c['created_at'][:10]}{where}\n{(c.get('body') or '').strip()}\n"
+        if size + len(entry) > DISCUSSION_LIMIT:
+            break
+        entries.append(entry)
+        size += len(entry)
+    return "\n".join(entries)
+
+
+def cmd_discussion():
+    """Write the upstream conversation to discussion.md."""
+    number = os.environ["UPSTREAM_PR"]
+    comments = list(paged(f"/repos/{UPSTREAM}/issues/{number}/comments"))
+    comments += paged(f"/repos/{UPSTREAM}/pulls/{number}/comments")
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "discussion.md").write_text(discussion_text(comments))
+
+
 def attachable_lines(patch):
     """Return the line numbers on the new side of a patch that a review comment can point at."""
     lines, new = set(), 0
@@ -428,8 +458,8 @@ def cmd_render():
     print(unlinked(summary_text(result, status, status.get("head", ""), 0, loose, False)))
 
 
-COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status, "post": cmd_post,
-            "render": cmd_render}
+COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status,
+            "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

@@ -141,6 +141,7 @@ jobs:
             --jq '{number, title, body, author: .user.login, target: .base.ref, state, draft}' \
             > .kodi-review-run/pr.json
           python3 "$BOT/review.py" status || echo "Status unavailable"
+          python3 "$BOT/review.py" discussion || echo "Discussion unavailable"
           gh pr diff "$FORK_PR" --repo "$GITHUB_REPOSITORY" > .kodi-review-run/full.diff
           prev=$(python3 "$BOT/review.py" prev)
           if [ -n "$prev" ] && [ "$prev" != "$HEAD_SHA" ]; then
