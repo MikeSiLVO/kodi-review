@@ -36,6 +36,8 @@ jobs:
           set -euo pipefail
           [[ "$UPSTREAM_PR" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $UPSTREAM_PR"; exit 1; }
           meta=$(gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR")
+          [[ "$(jq -r .state <<<"$meta")" == open ]] \
+            || { echo "Upstream PR $UPSTREAM_PR is not open; nothing to review."; exit 1; }
           head_sha=$(jq -r .head.sha <<<"$meta")
           base_ref=$(jq -r .base.ref <<<"$meta")
           base_sha=$(gh api "repos/$UPSTREAM/compare/$base_ref...$head_sha" \
