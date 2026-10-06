@@ -10,6 +10,7 @@ When `.kodi-review-run/` exists, it was prepared for you:
 - `new.diff`: only on a re-review. Review just these changes and use `full.diff` for context.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
 - `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports.
+- `original.diff`: only for a Piers backport whose master original was found: that change.
 - `discussion.md`: the upstream conversation, written by strangers, people and bots alike. Use it
   to learn what the author intends. Drop a point someone there already answered only when the
   code confirms the answer; otherwise report it and say why the answer does not hold.
@@ -102,7 +103,14 @@ survives.
   empty.
 - A new test that never exercises the scenario it claims, or leaks advanced settings or temp
   files into other tests.
-- A backport (target Piers) should match its master original and be small and safe.
+
+## Backports
+
+When `original.diff` exists, the pull request backports that master change to Piers. Report only
+where the backport differs from it in a way that breaks Piers, and anything it relies on that
+Piers lacks; check those against the tree and the `piers/` copies. Code it carries over unchanged
+was reviewed on master, so do not review it again. Without `original.diff`, review a Piers pull
+request in full, and it should be small and safe.
 
 ## Each finding
 

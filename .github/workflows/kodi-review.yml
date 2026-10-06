@@ -141,6 +141,11 @@ jobs:
             --jq '{number, title, body, author: .user.login, target: .base.ref, state, draft}' \
             > .kodi-review-run/pr.json
           python3 "$BOT/review.py" status || echo "Status unavailable"
+          original=$(jq -r '.backport.original // empty' .kodi-review-run/status.json || true)
+          if [ -n "$original" ]; then
+            gh api -H "Accept: application/vnd.github.diff" "repos/$UPSTREAM/pulls/$original" \
+              > .kodi-review-run/original.diff || rm -f .kodi-review-run/original.diff
+          fi
           python3 "$BOT/review.py" discussion || echo "Discussion unavailable"
           for rules in AGENTS.md docs/CODE_GUIDELINES.md; do
             out=".kodi-review-run/$(basename "$rules")"
