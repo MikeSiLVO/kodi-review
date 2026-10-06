@@ -180,8 +180,8 @@ jobs:
           prompt: |
             Review upstream Kodi pull request ${{ inputs.pr }}, mirrored here as pull request
             ${{ needs.mirror.outputs.fork_pr }}. Follow the review instructions in your system
-            prompt. Start with .kodi-review-run/pr.json, status.json and the diff files next to
-            them, then return the result in the required structured format.
+            prompt. Read the prepared files your instructions name in your first turn, then
+            return the result in the required structured format.
           claude_args: |
             --model claude-opus-5-5
             --effort medium
