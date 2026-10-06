@@ -577,8 +577,37 @@ def cmd_render():
     print(unlinked(summary_text(result, status, status.get("head", ""), loose, False)))
 
 
+def usage_lines(messages):
+    """List each tool call with the size of its result, then the token totals; no contents."""
+    calls, lines = {}, []
+    for m in messages:
+        content = (m.get("message") or {}).get("content")
+        for part in content if isinstance(content, list) else []:
+            if part.get("type") == "tool_use":
+                given = part.get("input") or {}
+                target = given.get("file_path") or given.get("path") or ""
+                span = f"{given.get('offset', 0)}+{given['limit']}" if "limit" in given else ""
+                calls[part.get("id")] = " ".join(
+                    filter(None, [part.get("name"), target, given.get("pattern"), span]))
+            elif part.get("type") == "tool_result":
+                body = part.get("content")
+                size = len(body) if isinstance(body, str) else len(json.dumps(body))
+                lines.append(f"{size:>8} chars  {calls.get(part.get('tool_use_id'), '?')}")
+    for m in messages:
+        if m.get("type") == "result":
+            lines.append(f"tokens {json.dumps(m.get('usage'))} turns {m.get('num_turns')} "
+                         f"cost {m.get('total_cost_usd')}")
+    return lines
+
+
+def cmd_usage():
+    """Print the review's tool calls and token totals from its execution file."""
+    print("\n".join(usage_lines(json.loads(Path(sys.argv[2]).read_text()))))
+
+
 COMMANDS = {"prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers, "status": cmd_status,
-            "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render}
+            "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
+            "usage": cmd_usage}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

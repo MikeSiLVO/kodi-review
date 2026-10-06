@@ -348,6 +348,28 @@ class RepeatTests(unittest.TestCase):
         self.assertIn("1 earlier finding still open.", summary)
 
 
+class UsageTests(unittest.TestCase):
+    """The token report printed from the execution file."""
+
+    def test_usage_lines(self):
+        """Each tool call shows its target and result size, never the result itself."""
+        messages = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "u1", "name": "Read",
+                 "input": {"file_path": "a.cpp", "offset": 10, "limit": 50}},
+                {"type": "tool_use", "id": "u2", "name": "Grep", "input": {"pattern": "Foo"}}]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "u1", "content": "secret body"},
+                {"type": "tool_result", "tool_use_id": "u2", "content": [{"text": "x"}]}]}},
+            {"type": "result", "usage": {"output_tokens": 5}, "num_turns": 2,
+             "total_cost_usd": 0.1}]
+        lines = review.usage_lines(messages)
+        self.assertEqual(lines[0], "      11 chars  Read a.cpp 10+50")
+        self.assertTrue(lines[1].endswith("chars  Grep Foo"))
+        self.assertEqual(lines[2], 'tokens {"output_tokens": 5} turns 2 cost 0.1')
+        self.assertNotIn("secret", "\n".join(lines))
+
+
 class WithheldTests(unittest.TestCase):
     """Review output that looks like it carries a credential."""
 

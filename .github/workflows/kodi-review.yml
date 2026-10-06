@@ -193,6 +193,12 @@ jobs:
             --disallowedTools "Read(./.git/**)"
             --json-schema '${{ steps.prep.outputs.schema }}'
 
+      - name: Token use
+        if: always() && steps.claude.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: python3 "$BOT/review.py" usage "$EXECUTION_FILE" || true
+
       - name: Post the review
         if: always() && steps.prep.outcome == 'success'
         env:
