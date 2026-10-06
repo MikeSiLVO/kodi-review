@@ -415,20 +415,38 @@ def place_findings(findings, lines):
     return inline, loose
 
 
-def verdict_line(result):
-    """Format the verdict in bold, then the problem count by severity when there are any."""
+def settled_verdict(result, status):
+    """Return the verdict matched to findings; a ready one waits on failing builds or conflicts."""
+    verdict, findings = result["verdict"], result["findings"]
+    if verdict == "Ready to merge" and findings:
+        minor = all(f["severity"] == "Minor" for f in findings)
+        verdict = "Merge after small fixes" if minor else "Needs more work"
+    elif verdict == "Merge after small fixes" and not findings:
+        verdict = "Ready to merge"
+    if verdict == "Ready to merge":
+        waits = [wait for wait, blocked in
+                 (("the test builds pass", (status.get("builds") or {}).get("failing")),
+                  ("the conflicts are resolved", status.get("conflicts"))) if blocked]
+        if waits:
+            verdict += " once " + " and ".join(waits)
+    return verdict
+
+
+def verdict_line(result, status):
+    """Format the settled verdict in bold, then the problem count by severity when there are any."""
     findings = result["findings"]
+    verdict = settled_verdict(result, status)
     if not findings:
-        return f"**{result['verdict']}**"
+        return f"**{verdict}**"
     counts = [f"{n} {s}" for s in SEVERITIES if (n := sum(f["severity"] == s for f in findings))]
     detail = findings[0]["severity"] if len(findings) == 1 else ", ".join(counts)
     plural = "s" if len(findings) != 1 else ""
-    return f"**{result['verdict']}** · {len(findings)} problem{plural} ({detail})"
+    return f"**{verdict}** · {len(findings)} problem{plural} ({detail})"
 
 
 def summary_text(result, status, head, loose, rerun):
     """Format the summary comment, the Where it stands block included."""
-    parts = [f"{verdict_line(result)}\n{result['summary']}"]
+    parts = [f"{verdict_line(result, status)}\n{result['summary']}"]
     if loose:
         parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
     parts.append("**Where it stands**\n" + "\n".join(status_lines(status, result)))

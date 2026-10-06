@@ -99,17 +99,19 @@ class RenderTests(unittest.TestCase):
             "**Kodi 22:** Yes, for 22.0. Piers has the same bug. Backport: none yet.",
             "**Next:** A team member merges it."])
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
-        self.assertTrue(text.startswith("**Ready to merge**\nFixes the crash.\n\n"))
+        self.assertTrue(text.startswith("**Ready to merge once the test builds pass and the "
+                                        "conflicts are resolved**\nFixes the crash.\n\n"))
         self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
 
     def test_verdict_line_counts(self):
         """The verdict line counts problems by severity, naming a lone one's severity alone."""
-        finding = {"severity": "Moderate"}
-        self.assertEqual(review.verdict_line(dict(RESULT, findings=[finding])),
-                         "**Ready to merge** · 1 problem (Moderate)")
+        result = dict(RESULT, verdict="Needs more work")
+        self.assertEqual(review.verdict_line(dict(result, findings=[{"severity": "Moderate"}]), {}),
+                         "**Needs more work** · 1 problem (Moderate)")
         findings = [{"severity": "Minor"}, {"severity": "Serious"}, {"severity": "Minor"}]
-        self.assertEqual(review.verdict_line(dict(RESULT, findings=findings)),
-                         "**Ready to merge** · 3 problems (1 Serious, 2 Minor)")
+        self.assertEqual(review.verdict_line(dict(result, findings=findings), {}),
+                         "**Needs more work** · 3 problems (1 Serious, 2 Minor)")
+
 
     def test_quiet_lines_skipped(self):
         """Reviews, conflicts and labels with nothing to say have their lines skipped."""
@@ -143,6 +145,37 @@ class RenderTests(unittest.TestCase):
             "**Kodi 22:** Yes, for 22.0. Piers has the same bug.",
             "**Next:** A team member merges it.",
             "**Unavailable:** pull request"])
+
+
+class SettledVerdictTests(unittest.TestCase):
+    """The verdict corrected to agree with the findings and the status."""
+
+    def settle(self, verdict, severities=(), status=None):
+        """Settle a copy of RESULT rewritten for one test case."""
+        result = dict(RESULT, verdict=verdict, findings=[{"severity": s} for s in severities])
+        return review.settled_verdict(result, status or {})
+
+    def test_ready_with_findings(self):
+        """Ready to merge with Minor findings becomes small fixes, with worse ones more work."""
+        self.assertEqual(self.settle("Ready to merge", ["Minor"]), "Merge after small fixes")
+        self.assertEqual(self.settle("Ready to merge", ["Minor", "Moderate"]), "Needs more work")
+
+    def test_small_fixes_without_findings(self):
+        """Merge after small fixes with no findings becomes Ready to merge."""
+        self.assertEqual(self.settle("Merge after small fixes"), "Ready to merge")
+
+    def test_ready_waits_on_builds(self):
+        """Ready to merge waits on failing builds; passing ones add nothing."""
+        failing = {"builds": {"failing": ["Jenkins"]}}
+        self.assertEqual(self.settle("Ready to merge", status=failing),
+                         "Ready to merge once the test builds pass")
+        self.assertEqual(self.settle("Ready to merge", status={"builds": {"failing": []}}),
+                         "Ready to merge")
+
+    def test_other_verdicts_kept(self):
+        """Verdicts that already agree with the facts are left alone."""
+        self.assertEqual(self.settle("Needs more work", ["Serious"]), "Needs more work")
+        self.assertEqual(self.settle("Needs a team decision"), "Needs a team decision")
 
 
 class FailedRunTests(unittest.TestCase):
