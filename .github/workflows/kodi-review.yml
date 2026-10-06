@@ -151,6 +151,11 @@ jobs:
           python3 "$BOT/review.py" piers
           echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
 
+      - name: Install bubblewrap for the subprocess env scrub
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+
       - name: Review
         id: claude
         uses: anthropics/claude-code-action@v1

@@ -33,6 +33,11 @@ jobs:
           sparse-checkout: .github/kodi-review
           persist-credentials: false
 
+      - name: Install bubblewrap for the subprocess env scrub
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bubblewrap socat
+
       - name: Answer
         uses: anthropics/claude-code-action@v1
         env:
