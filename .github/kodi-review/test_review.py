@@ -1,5 +1,6 @@
 """Offline tests for the review helpers: patch comparison, label rules, Where it stands block."""
 
+import json
 import os
 import unittest
 from unittest import mock
@@ -157,6 +158,33 @@ class FailedRunTests(unittest.TestCase):
         self.assertIsNotNone(review.MARKER.match(body))
         with mock.patch.object(review, "summary_comment", return_value={"id": 1, "body": body}):
             self.assertEqual(review.reviewed_sha(), "")
+
+
+class WithheldTests(unittest.TestCase):
+    """Review output that looks like it carries a credential."""
+
+    def test_credential_is_withheld(self):
+        """Only the withheld note is posted, under the old commit, and the command exits with 1."""
+        result = dict(RESULT, summary="Found ghp_" + "a" * 36 + " in the log.")
+        comment = {"id": 1, "body": f"<!-- kodi-review sha={'a' * 40} -->\nold"}
+        with mock.patch.object(review, "summary_comment", return_value=comment), \
+                mock.patch.object(review, "changed_files", return_value=[]), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}), \
+                self.assertRaises(SystemExit) as stop:
+            review.cmd_post()
+        self.assertEqual(stop.exception.code, 1)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[2]["body"],
+                         f"<!-- kodi-review sha={'a' * 40} -->\n{review.WITHHELD}")
+
+    def test_patterns(self):
+        """Anthropic keys, GitHub tokens and fine-grained PATs match; look-alikes do not."""
+        for text in ("sk-ant-api03-x", "gho_" + "A1" * 10, "github_pat_11ABC"):
+            self.assertRegex(text, review.CREDENTIAL)
+        for text in ("ghp_short", "sk-other", "github pat"):
+            self.assertNotRegex(text, review.CREDENTIAL)
 
 
 if __name__ == "__main__":

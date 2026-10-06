@@ -24,6 +24,9 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
 NOT_BUILDS = {"CodeRabbit", "Mergeable"}
 BUILD_NAMES = {"default": "Jenkins"}
 FAILED = {"failure", "error", "timed_out", "action_required", "startup_failure"}
+CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_")
+WITHHELD = ("Withheld: the review output contained something that looks like a credential. "
+            "Check the run.")
 
 
 def request(method, path, body=None, raw=False) -> Any:
@@ -378,7 +381,7 @@ def upsert_summary(sha, text):
 
 
 def cmd_post():
-    """Post findings inline where they fit, the rest in the summary comment, or note a failure."""
+    """Post findings inline or in the summary comment, or note a failure; exit 1 on a credential."""
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
@@ -387,11 +390,15 @@ def cmd_post():
         return
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
+    rerun = (RUN_DIR / "new.diff").exists()
+    summary = summary_text(result, load_status(), head, len(inline), loose, rerun)
+    if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
+        upsert_summary(reviewed_sha(), WITHHELD)
+        sys.exit(1)
     if inline:
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})
-    rerun = (RUN_DIR / "new.diff").exists()
-    upsert_summary(head, summary_text(result, load_status(), head, len(inline), loose, rerun))
+    upsert_summary(head, summary)
 
 
 def cmd_render():
