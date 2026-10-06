@@ -18,9 +18,10 @@ def changed(name, patch, sha="0"):
 
 
 def block(status):
-    """Return the Where it stands lines of the rendered summary."""
+    """Return the Where it stands lines of the rendered summary, list markers stripped."""
     text = review.summary_text(RESULT, status, "f" * 40, [], False)
-    return text.split("**Where it stands**\n")[1].split("\n\n")[0].splitlines()
+    lines = text.split("**Where it stands**\n")[1].split("\n\n")[0].splitlines()
+    return [line.removeprefix("- ") for line in lines]
 
 
 class PatchTests(unittest.TestCase):
@@ -99,18 +100,19 @@ class RenderTests(unittest.TestCase):
             "**Kodi 22:** Yes, for 22.0. Piers has the same bug. Backport: none yet.",
             "**Next:** A team member merges it."])
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
-        self.assertTrue(text.startswith("**Ready to merge once the test builds pass and the "
-                                        "conflicts are resolved**\nFixes the crash.\n\n"))
+        self.assertTrue(text.startswith("### Ready to merge once the test builds pass and the "
+                                        "conflicts are resolved\nFixes the crash.\n\n---\n\n"))
+        self.assertIn("**Where it stands**\n- **Reviews:**", text)
         self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
 
     def test_verdict_line_counts(self):
         """The verdict line counts problems by severity, naming a lone one's severity alone."""
         result = dict(RESULT, verdict="Needs more work")
         self.assertEqual(review.verdict_line(dict(result, findings=[{"severity": "Moderate"}]), {}),
-                         "**Needs more work** · 1 problem (Moderate)")
+                         "Needs more work · 1 problem (Moderate)")
         findings = [{"severity": "Minor"}, {"severity": "Serious"}, {"severity": "Minor"}]
         self.assertEqual(review.verdict_line(dict(result, findings=findings), {}),
-                         "**Needs more work** · 3 problems (1 Serious, 2 Minor)")
+                         "Needs more work · 3 problems (1 Serious, 2 Minor)")
 
 
     def test_quiet_lines_skipped(self):

@@ -433,23 +433,25 @@ def settled_verdict(result, status):
 
 
 def verdict_line(result, status):
-    """Format the settled verdict in bold, then the problem count by severity when there are any."""
+    """Format the settled verdict, then the problem count by severity when there are any."""
     findings = result["findings"]
     verdict = settled_verdict(result, status)
     if not findings:
-        return f"**{verdict}**"
+        return verdict
     counts = [f"{n} {s}" for s in SEVERITIES if (n := sum(f["severity"] == s for f in findings))]
     detail = findings[0]["severity"] if len(findings) == 1 else ", ".join(counts)
     plural = "s" if len(findings) != 1 else ""
-    return f"**{verdict}** · {len(findings)} problem{plural} ({detail})"
+    return f"{verdict} · {len(findings)} problem{plural} ({detail})"
 
 
 def summary_text(result, status, head, loose, rerun):
-    """Format the summary comment, the Where it stands block included."""
-    parts = [f"{verdict_line(result, status)}\n{result['summary']}"]
+    """Format the summary comment, verdict as a heading and the Where it stands facts as a list."""
+    parts = [f"### {verdict_line(result, status)}\n{result['summary']}"]
     if loose:
         parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
-    parts.append("**Where it stands**\n" + "\n".join(status_lines(status, result)))
+    parts.append("---")
+    lines = status_lines(status, result)
+    parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
     parts.append(f"<sub>Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}.</sub>")
     return "\n\n".join(parts)
 
