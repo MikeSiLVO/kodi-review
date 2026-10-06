@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "verdict", "kodi22", "kodi22_reason", "findings"],
+  "properties": {
+    "summary": {"type": "string"},
+    "verdict": {
+      "type": "string",
+      "enum": ["Ready to merge", "Merge after small fixes", "Needs more work",
+               "Needs a team decision", "Likely to be closed"]
+    },
+    "kodi22": {
+      "type": "string",
+      "enum": ["Yes, for 22.0", "Later, for 22.x", "No", "Backport already open"]
+    },
+    "kodi22_reason": {"type": "string"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line", "severity", "problem", "fix"],
+        "properties": {
+          "path": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "severity": {"type": "string", "enum": ["Serious", "Moderate", "Minor"]},
+          "problem": {"type": "string"},
+          "fix": {"type": "string"}
+        }
+      }
+    }
+  }
+}

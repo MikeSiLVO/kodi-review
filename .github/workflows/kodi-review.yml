@@ -1,0 +1,170 @@
+name: Kodi PR review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Upstream xbmc/xbmc pull request number"
+        required: true
+        type: string
+
+concurrency:
+  group: kodi-review-${{ inputs.pr }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: xbmc/xbmc
+  UPSTREAM_PR: ${{ inputs.pr }}
+
+jobs:
+  mirror:
+    if: github.repository_owner == 'MikeSiLVO'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      fork_pr: ${{ steps.pr.outputs.fork_pr }}
+      head_sha: ${{ steps.refs.outputs.head_sha }}
+    steps:
+      - name: Mirror the upstream branches
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$UPSTREAM_PR" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $UPSTREAM_PR"; exit 1; }
+          meta=$(gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR")
+          head_sha=$(jq -r .head.sha <<<"$meta")
+          base_ref=$(jq -r .base.ref <<<"$meta")
+          base_sha=$(gh api "repos/$UPSTREAM/compare/$base_ref...$head_sha" \
+            --jq .merge_base_commit.sha)
+
+          set_ref() {
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$1" >/dev/null 2>&1; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/$1" \
+                -f sha="$2" -F force=true >/dev/null
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f ref="refs/heads/$1" -f sha="$2" >/dev/null
+            fi
+          }
+
+          if ! { set_ref "review/$UPSTREAM_PR-base" "$base_sha" &&
+                 set_ref "review/$UPSTREAM_PR" "$head_sha"; }; then
+            echo "API refused the upstream commits, pushing them with git instead"
+            remote="https://x-access-token:${GH_TOKEN}@github.com/$GITHUB_REPOSITORY.git"
+            default=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+            git init -q mirror && cd mirror
+            git fetch -q --no-tags "https://github.com/$UPSTREAM.git" \
+              "+refs/pull/$UPSTREAM_PR/head:refs/upstream/pr" \
+              "+refs/heads/$base_ref:refs/upstream/base"
+            git fetch -q --no-tags "$remote" "+refs/heads/$default:refs/fork/default"
+            git push -q -f "$remote" \
+              "$head_sha:refs/heads/review/$UPSTREAM_PR" \
+              "$base_sha:refs/heads/review/$UPSTREAM_PR-base"
+          fi
+
+          {
+            echo "head_sha=$head_sha"
+            echo "title=$(jq -r .title <<<"$meta" | tr -d '@')"
+            echo "author=$(jq -r .user.login <<<"$meta")"
+            echo "base_ref=$base_ref"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the mirror pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.refs.outputs.title }}
+          AUTHOR: ${{ steps.refs.outputs.author }}
+          BASE_REF: ${{ steps.refs.outputs.base_ref }}
+          HEAD_SHA: ${{ steps.refs.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          title="Review of upstream PR $UPSTREAM_PR: $TITLE"
+          body="Mirror of upstream pull request $UPSTREAM_PR by $AUTHOR, targeting $BASE_REF."
+          body+=$'\n\n'"Upstream head ${HEAD_SHA:0:12}."
+          number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "review/$UPSTREAM_PR" \
+            --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "review/$UPSTREAM_PR-base" \
+              --head "review/$UPSTREAM_PR" --title "$title" --body "$body")
+            number=${url##*/}
+          else
+            gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
+          echo "fork_pr=$number" >> "$GITHUB_OUTPUT"
+
+  review:
+    needs: mirror
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FORK_PR: ${{ needs.mirror.outputs.fork_pr }}
+      HEAD_SHA: ${{ needs.mirror.outputs.head_sha }}
+      BOT: .kodi-review-bot/.github/kodi-review
+    steps:
+      - name: Check out the pull request code
+        uses: actions/checkout@v6
+        with:
+          ref: review/${{ inputs.pr }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the review bot
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .kodi-review-bot
+          sparse-checkout: .github/kodi-review
+          persist-credentials: false
+
+      - name: Prepare the review inputs
+        id: prep
+        run: |
+          set -euo pipefail
+          mkdir -p .kodi-review-run
+          gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR" \
+            --jq '{number, title, body, author: .user.login, target: .base.ref, state, draft}' \
+            > .kodi-review-run/pr.json
+          gh pr diff "$FORK_PR" --repo "$GITHUB_REPOSITORY" > .kodi-review-run/full.diff
+          prev=$(python3 "$BOT/review.py" prev)
+          if [ -n "$prev" ] && [ "$prev" != "$HEAD_SHA" ]; then
+            gh api -H "Accept: application/vnd.github.diff" \
+              "repos/$GITHUB_REPOSITORY/compare/$prev...$HEAD_SHA" > .kodi-review-run/new.diff \
+              || rm -f .kodi-review-run/new.diff
+          fi
+          python3 "$BOT/review.py" piers
+          echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Review
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Review upstream Kodi pull request ${{ inputs.pr }}, mirrored here as pull request
+            ${{ needs.mirror.outputs.fork_pr }}. Follow the review instructions in your system
+            prompt. Start with .kodi-review-run/pr.json and the diff files next to it, then return
+            the result in the required structured format.
+          claude_args: |
+            --model claude-opus-5-5
+            --effort medium
+            --max-turns 40
+            --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
+            --allowedTools "Read,Grep,Glob"
+            --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
+            --json-schema '${{ steps.prep.outputs.schema }}'
+
+      - name: Post the review
+        if: always() && steps.prep.outcome == 'success'
+        env:
+          RESULT: ${{ steps.claude.outputs.structured_output }}
+        run: python3 "$BOT/review.py" post

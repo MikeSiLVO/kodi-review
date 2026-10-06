@@ -1,0 +1,46 @@
+name: Kodi PR review follow-up
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  reply:
+    if: >-
+      github.repository_owner == 'MikeSiLVO' &&
+      github.event.issue.pull_request &&
+      github.event.comment.author_association == 'OWNER' &&
+      contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Check out the pull request code
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the review bot
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .kodi-review-bot
+          sparse-checkout: .github/kodi-review
+          persist-credentials: false
+
+      - name: Answer
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: |
+            --model claude-opus-5-5
+            --effort medium
+            --max-turns 30
+            --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
+            --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
