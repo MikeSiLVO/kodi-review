@@ -88,15 +88,16 @@ class RenderTests(unittest.TestCase):
                   "reviews": [{"login": "a", "state": "APPROVED", "team": True},
                               {"login": "b", "state": "CHANGES_REQUESTED", "team": False,
                                "author_pushed_since": True, "author_commented_since": False}],
-                  "builds": {"count": 2, "failing": ["Jenkins"], "pending": []},
+                  "builds": {"count": 2, "failing": ["Jenkins"], "pending": [],
+                             "links": {"Jenkins": "https://jenkins.kodi.tv/job/1/"}},
                   "backport": {"backports": []}, "unavailable": []}
         self.assertEqual(block(status), [
-            "Reviews: approved by a (team); changes requested by b, author pushed since",
-            "Test builds: failing (Jenkins)",
-            "Conflicts: yes, needs a rebase onto master",
-            "Labels: no milestone",
-            "Kodi 22: **Yes, for 22.0**. Piers has the same bug. Backport: none yet.",
-            "Next: A team member merges it."])
+            "**Reviews:** approved by a (team); changes requested by b, author pushed since",
+            "**Test builds:** failing ([Jenkins](https://jenkins.kodi.tv/job/1/))",
+            "**Conflicts:** yes, needs a rebase onto master",
+            "**Labels:** no milestone",
+            "**Kodi 22:** Yes, for 22.0. Piers has the same bug. Backport: none yet.",
+            "**Next:** A team member merges it."])
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
         self.assertTrue(text.startswith("**Ready to merge**\nFixes the crash.\n\n"))
         self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
@@ -115,16 +116,16 @@ class RenderTests(unittest.TestCase):
         status = {"base": "master", "conflicts": False, "label_problems": [], "reviews": [],
                   "builds": {"count": 1, "failing": [], "pending": []}, "backport": None}
         self.assertEqual(block(status), [
-            "Test builds: passing",
-            "Kodi 22: **Yes, for 22.0**. Piers has the same bug.",
-            "Next: A team member merges it."])
+            "**Test builds:** passing",
+            "**Kodi 22:** Yes, for 22.0. Piers has the same bug.",
+            "**Next:** A team member merges it."])
 
     def test_unanswered_change_request(self):
         """A change request with no push or comment after it says so."""
         status = {"reviews": [{"login": "b", "state": "CHANGES_REQUESTED", "team": True,
                                "author_pushed_since": False, "author_commented_since": False}]}
         self.assertEqual(block(status)[0],
-                         "Reviews: changes requested by b (team), no answer yet")
+                         "**Reviews:** changes requested by b (team), no answer yet")
 
     def test_backport_original(self):
         """A Piers backport names its original, its state and any files that differ."""
@@ -139,9 +140,9 @@ class RenderTests(unittest.TestCase):
     def test_missing_status(self):
         """Without status facts only the model's lines and the unavailable note remain."""
         self.assertEqual(block({"unavailable": ["pull request"]}), [
-            "Kodi 22: **Yes, for 22.0**. Piers has the same bug.",
-            "Next: A team member merges it.",
-            "Unavailable: pull request"])
+            "**Kodi 22:** Yes, for 22.0. Piers has the same bug.",
+            "**Next:** A team member merges it.",
+            "**Unavailable:** pull request"])
 
 
 class FailedRunTests(unittest.TestCase):

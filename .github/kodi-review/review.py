@@ -172,16 +172,19 @@ def review_status(pr):
 
 
 def build_status(pr):
-    """Return the head commit's test builds, naming the failing and pending ones."""
+    """Return the head commit's test builds, naming the failing and pending ones with links."""
     head = pr["head"]["sha"]
     runs = request("GET", f"/repos/{UPSTREAM}/commits/{head}/check-runs?per_page=100")
-    states = {run["name"]: run["conclusion"] or "pending" for run in runs["check_runs"]}
+    states = {run["name"]: (run["conclusion"] or "pending", run.get("details_url"))
+              for run in runs["check_runs"]}
     for status in request("GET", f"/repos/{UPSTREAM}/commits/{head}/status")["statuses"]:
-        states[status["context"]] = status["state"]
-    builds = {BUILD_NAMES.get(name) or name: state for name, state in states.items()
+        states[status["context"]] = (status["state"], status.get("target_url"))
+    builds = {BUILD_NAMES.get(name) or name: value for name, value in states.items()
               if name not in NOT_BUILDS}
-    return {"count": len(builds), "failing": sorted(n for n, s in builds.items() if s in FAILED),
-            "pending": sorted(n for n, s in builds.items() if s == "pending")}
+    return {"count": len(builds),
+            "failing": sorted(n for n, (s, _) in builds.items() if s in FAILED),
+            "pending": sorted(n for n, (s, _) in builds.items() if s == "pending"),
+            "links": {n: url for n, (_, url) in builds.items() if url}}
 
 
 def normalized_patch(file):
@@ -374,24 +377,30 @@ def status_lines(status, result):
     """Format the Where it stands lines, skipping any with nothing to say."""
     lines = []
     if status.get("reviews"):
-        lines.append("Reviews: " + "; ".join(reviewer_text(r) for r in status["reviews"]))
+        lines.append("**Reviews:** " + "; ".join(reviewer_text(r) for r in status["reviews"]))
     builds = status.get("builds") or {}
+    links = builds.get("links") or {}
     if builds.get("failing"):
-        lines.append(f"Test builds: failing ({', '.join(builds['failing'])})")
+        lines.append(f"**Test builds:** failing ({linked_builds(builds['failing'], links)})")
     elif builds.get("pending"):
-        lines.append(f"Test builds: pending ({', '.join(builds['pending'])})")
+        lines.append(f"**Test builds:** pending ({linked_builds(builds['pending'], links)})")
     elif builds.get("count"):
-        lines.append("Test builds: passing")
+        lines.append("**Test builds:** passing")
     if status.get("conflicts"):
-        lines.append(f"Conflicts: yes, needs a rebase onto {status['base']}")
+        lines.append(f"**Conflicts:** yes, needs a rebase onto {status['base']}")
     if status.get("label_problems"):
-        lines.append("Labels: " + ", ".join(status["label_problems"]))
-    lines.append(f"Kodi 22: **{result['kodi22']}**. {result['kodi22_reason']}"
+        lines.append("**Labels:** " + ", ".join(status["label_problems"]))
+    lines.append(f"**Kodi 22:** {result['kodi22']}. {result['kodi22_reason']}"
                  + backport_text(status.get("backport")))
-    lines.append(f"Next: {result['next_step']}")
+    lines.append(f"**Next:** {result['next_step']}")
     if status.get("unavailable"):
-        lines.append("Unavailable: " + ", ".join(status["unavailable"]))
+        lines.append("**Unavailable:** " + ", ".join(status["unavailable"]))
     return lines
+
+
+def linked_builds(names, links):
+    """Format build names, each linked to its job when the status gave one."""
+    return ", ".join(f"[{name}]({links[name]})" if name in links else name for name in names)
 
 
 def place_findings(findings, lines):
