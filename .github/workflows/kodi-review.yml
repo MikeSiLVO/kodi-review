@@ -117,6 +117,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Remove agent config from the pull request code
+        run: |
+          rm -rf .claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md \
+            CLAUDE.local.md .husky
+
       - name: Check out the review bot
         uses: actions/checkout@v6
         with:
