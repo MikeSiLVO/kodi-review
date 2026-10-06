@@ -128,6 +128,7 @@ but do not restate them.
 ## Writing
 
 Plain words, short sentences, no filler, no praise, no em dashes. Do not repeat the code back.
+Never write @names, links to GitHub, or #numbers. Write upstream pull requests as PR 12345.
 When answering a comment instead of reviewing, answer only what was asked, in the same style.
 If a maintainer explains why a point is intentional or out of scope, accept it in one line and
 drop it, without restating it in a narrower form. Present a suspected root cause as a guess with

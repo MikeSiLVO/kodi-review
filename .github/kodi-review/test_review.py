@@ -160,6 +160,50 @@ class FailedRunTests(unittest.TestCase):
             self.assertEqual(review.reviewed_sha(), "")
 
 
+class UnlinkedTests(unittest.TestCase):
+    """Posted text that pings nobody and links no upstream pull request."""
+
+    def test_mention_outside_code(self):
+        """A mention gets a zero-width space; code, emails and paths keep their @."""
+        self.assertEqual(review.unlinked("Ask @fuzzard, not `@code`, a@b.com or x/@y"),
+                         "Ask @​fuzzard, not `@code`, a@b.com or x/@y")
+
+    def test_upstream_links_and_refs(self):
+        """Upstream links and owner/repo references become upstream PR numbers."""
+        text = ("See https://github.com/xbmc/xbmc/pull/29589/files, "
+                "github.com/xbmc/xbmc/issues/7#issuecomment-12. and xbmc/xbmc#29502.")
+        self.assertEqual(review.unlinked(text),
+                         "See upstream PR 29589, upstream PR 7. and upstream PR 29502.")
+
+    def test_bare_number(self):
+        """A bare number of three or more digits becomes PR N; short ones and entities stay."""
+        self.assertEqual(review.unlinked("Since #24720, not #12 or &#123;"),
+                         "Since PR 24720, not #12 or &#123;")
+
+    def test_code_block_kept(self):
+        """A fenced block keeps its mentions and numbers."""
+        text = "```\n@x #123 xbmc/xbmc#5\n```"
+        self.assertEqual(review.unlinked(text), text)
+
+    def test_post_unlinks(self):
+        """The summary and line comments are posted with mentions and numbers unlinked."""
+        finding = {"path": "a.cpp", "line": 2, "severity": "Minor", "problem": "Ask @a.",
+                   "fix": "See #12345."}
+        result = dict(RESULT, summary="Since xbmc/xbmc#24720.", findings=[finding])
+        files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n z"}]
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=files), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}):
+            review.cmd_post()
+        line_comment = request.call_args_list[0].args[2]["comments"][0]["body"]
+        summary = request.call_args_list[1].args[2]["body"]
+        self.assertIn("Ask @​a.", line_comment)
+        self.assertIn("See PR 12345.", line_comment)
+        self.assertIn("Since upstream PR 24720.", summary)
+
+
 class WithheldTests(unittest.TestCase):
     """Review output that looks like it carries a credential."""
 

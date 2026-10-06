@@ -24,6 +24,12 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
 NOT_BUILDS = {"CodeRabbit", "Mergeable"}
 BUILD_NAMES = {"default": "Jenkins"}
 FAILED = {"failure", "error", "timed_out", "action_required", "startup_failure"}
+CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
+UPSTREAM_LINK = re.compile(rf"(?:https?://)?(?:www\.)?github\.com/{re.escape(UPSTREAM)}/"
+                           r"(?:pull|issues)/(\d+)(?:/[\w/-]*)?(?:[?#][\w=&-]*)?")
+UPSTREAM_REF = re.compile(rf"\b{re.escape(UPSTREAM)}#(\d+)\b")
+BARE_REF = re.compile(r"(?<![\w&/])#(\d{3,})\b")
+MENTION = re.compile(r"(?<![\w/])@(?=[A-Za-z0-9])")
 CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_")
 WITHHELD = ("Withheld: the review output contained something that looks like a credential. "
             "Check the run.")
@@ -289,6 +295,17 @@ def load_status():
         return {}
 
 
+def unlinked(text):
+    """Return a copy with @mentions, upstream links and PR numbers outside code unlinked."""
+    parts = CODE.split(text)
+    for i in range(0, len(parts), 2):
+        part = UPSTREAM_LINK.sub(r"upstream PR \1", parts[i])
+        part = UPSTREAM_REF.sub(r"upstream PR \1", part)
+        part = BARE_REF.sub(r"PR \1", part)
+        parts[i] = MENTION.sub("@​", part)
+    return "".join(parts)
+
+
 def finding_text(finding):
     """Format one finding as comment markdown."""
     return f"**{finding['severity']}:** {finding['problem']}\n\n**Fix:** {finding['fix']}"
@@ -391,7 +408,9 @@ def cmd_post():
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
-    summary = summary_text(result, load_status(), head, len(inline), loose, rerun)
+    summary = unlinked(summary_text(result, load_status(), head, len(inline), loose, rerun))
+    for comment in inline:
+        comment["body"] = unlinked(comment["body"])
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
         upsert_summary(reviewed_sha(), WITHHELD)
         sys.exit(1)
@@ -406,7 +425,7 @@ def cmd_render():
     status = json.loads(Path(sys.argv[2]).read_text())
     result = json.loads(Path(sys.argv[3]).read_text())
     _, loose = place_findings(result["findings"], {})
-    print(summary_text(result, status, status.get("head", ""), 0, loose, False))
+    print(unlinked(summary_text(result, status, status.get("head", ""), 0, loose, False)))
 
 
 COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status, "post": cmd_post,
