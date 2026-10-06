@@ -370,6 +370,25 @@ class UsageTests(unittest.TestCase):
         self.assertNotIn("secret", "\n".join(lines))
 
 
+class TrimTests(unittest.TestCase):
+    """Inputs trimmed before the reviewer reads them."""
+
+    def test_trimmed_body(self):
+        """Template comments, unticked boxes and CodeRabbit notes go; text and ticked boxes stay."""
+        body = ("Fixes a crash.\n<!--- describe it -->\n\n\n\n- [ ] **Clean up**\n"
+                "- [x] **Bug fix**\n<!-- This is an auto-generated comment: release notes by "
+                "coderabbit.ai -->\nSummary\n<!-- end of auto-generated comment: release notes by "
+                "coderabbit.ai -->")
+        self.assertEqual(review.trimmed_body(body), "Fixes a crash.\n\n- [x] **Bug fix**")
+
+    def test_prior_finding_first_line(self):
+        """An earlier finding keeps only its first line."""
+        thread = {"id": "T1", "isResolved": False, "path": "a.cpp", "line": 2,
+                  "comments": {"nodes": [{"author": {"login": "github-actions"},
+                                          "body": "**Serious: Breaks**\n\nLong detail."}]}}
+        self.assertEqual(review.open_findings([thread])[0]["finding"], "**Serious: Breaks**")
+
+
 class WithheldTests(unittest.TestCase):
     """Review output that looks like it carries a credential."""
 

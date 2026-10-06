@@ -37,6 +37,10 @@ WITHHELD = ("Withheld: the review output contained something that looks like a c
             "Check the run.")
 BOT_LOGIN = "github-actions"
 PRIOR_SEVERITY = re.compile(r"^\*\*(Serious|Moderate|Minor)\b")
+RABBIT = r"auto-generated comment: release notes by coderabbit\.ai -->"
+RABBIT_NOTES = re.compile(rf"<!-- This is an {RABBIT}.*?<!-- end of {RABBIT}", re.S)
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+UNTICKED = re.compile(r"\n[ \t]*- \[ \][^\n]*")
 THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100, after: $after) {
@@ -117,6 +121,22 @@ def cmd_piers():
     skipped += names[PIERS_FILE_LIMIT:]
     lines = [f"Not in Kodi 22: {n}" for n in missing] + [f"Not fetched: {n}" for n in skipped]
     (RUN_DIR / "piers.txt").write_text("\n".join(lines) + "\n" if lines else "")
+
+
+def trimmed_body(body):
+    """Return a pull request description without template comments, unticked boxes or bot notes."""
+    body = HTML_COMMENT.sub("", RABBIT_NOTES.sub("", body or ""))
+    return re.sub(r"\n{3,}", "\n\n", UNTICKED.sub("", body)).strip()
+
+
+def cmd_pr():
+    """Write the upstream pull request's title, trimmed description and target to pr.json."""
+    pr = request("GET", f"/repos/{UPSTREAM}/pulls/{os.environ['UPSTREAM_PR']}")
+    facts = {"number": pr["number"], "title": pr["title"], "body": trimmed_body(pr["body"]),
+             "author": pr["user"]["login"], "target": pr["base"]["ref"], "state": pr["state"],
+             "draft": pr["draft"]}
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "pr.json").write_text(json.dumps(facts, indent=1) + "\n")
 
 
 def search(query):
@@ -343,7 +363,7 @@ def graphql(query, **variables):
 def open_findings(threads):
     """Return the bot's unresolved threads that nobody else replied to, as earlier findings."""
     return [{"id": t["id"], "path": t["path"], "line": t["line"],
-             "finding": t["comments"]["nodes"][0]["body"]}
+             "finding": t["comments"]["nodes"][0]["body"].split("\n", 1)[0][:160]}
             for t in threads if not t["isResolved"] and t["comments"]["nodes"]
             and all((c["author"] or {}).get("login") == BOT_LOGIN
                     for c in t["comments"]["nodes"])]
@@ -605,7 +625,8 @@ def cmd_usage():
     print("\n".join(usage_lines(json.loads(Path(sys.argv[2]).read_text()))))
 
 
-COMMANDS = {"prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers, "status": cmd_status,
+COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers,
+            "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "usage": cmd_usage}
 

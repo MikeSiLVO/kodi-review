@@ -137,9 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .kodi-review-run
-          gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR" \
-            --jq '{number, title, body, author: .user.login, target: .base.ref, state, draft}' \
-            > .kodi-review-run/pr.json
+          python3 "$BOT/review.py" pr
           python3 "$BOT/review.py" status || echo "Status unavailable"
           original=$(jq -r '.backport.original // empty' .kodi-review-run/status.json || true)
           if [ -n "$original" ]; then
