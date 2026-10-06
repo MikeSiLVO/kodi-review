@@ -57,6 +57,8 @@ survives.
 - A thread-safety claim names the two threads, the shared state and the exact order of events.
 - A claim about what a function, library, compiler or platform does rests on its definition or
   docs in the tree. Never infer behavior from a name.
+- You have no network access. Never claim from memory that a tag, version, release or commit
+  exists or does not; only the tree and the files prepared for you count.
 - A suggested fix must change the outcome, keep earlier fixes working, and compile against the
   real signatures.
 - If you cannot prove it from the code, drop it.
