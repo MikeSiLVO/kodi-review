@@ -9,6 +9,7 @@ When `.kodi-review-run/` exists, it was prepared for you:
 - `full.diff`: the whole change.
 - `new.diff`: only on a re-review. Review just these changes and use `full.diff` for context.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
+- `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports.
 
 Branches: `master` is Kodi 23 in development. `Piers` is Kodi 22 at the release candidate stage,
 where only small, safe fixes belong.
@@ -54,12 +55,17 @@ what it calls) and try to show the claim is wrong. Keep it only if it survives.
 ## The rest of the result
 
 - `summary`: one or two sentences on what the change does and whether it is sound.
-- `verdict`: judged on the code and its description only.
+- `verdict`: judged on the code, its description and `status.json`.
 - `kodi22`: `Yes, for 22.0` for a small, safe fix to a bug that the `piers/` copy also has;
   `Later, for 22.x` for a worthwhile fix that should prove itself on master first; `No` for
   features, cleanups, risky changes or code Kodi 22 lacks; `Backport already open` when the
-  description says so. For a pull request that targets `Piers`, judge that backport itself.
+  description or `status.json` says so. For a pull request that targets `Piers`, judge that
+  backport itself.
 - `kodi22_reason`: one sentence.
+- `next_step`: one sentence on who does what next.
+
+Readers see the `status.json` facts under your review. Use them for `verdict` and `next_step`,
+but do not restate them.
 
 ## Writing
 

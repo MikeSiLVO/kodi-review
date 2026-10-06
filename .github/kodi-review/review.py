@@ -1,4 +1,4 @@
-"""Workflow helpers for the Kodi PR review: last reviewed commit, Kodi 22 files, posting."""
+"""Workflow helpers for the Kodi PR review: last reviewed commit, Kodi 22 files, status, posting."""
 
 import json
 import os
@@ -8,17 +8,25 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-REPO = os.environ["GITHUB_REPOSITORY"]
+REPO = os.environ.get("GITHUB_REPOSITORY", "")
 UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}) -->")
 PIERS_FILE_LIMIT = 40
-REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "findings")
+REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
+BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
+BACKPORT_OF = re.compile(r"backport(?:s| of)?\s+\S*?(?:#|/pull/)(\d+)", re.I)
+BACKPORT_TAG = re.compile(r"^\s*\[backport\]\s*", re.I)
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
+NOT_BUILDS = {"CodeRabbit", "Mergeable"}
+BUILD_NAMES = {"default": "Jenkins"}
+FAILED = {"failure", "error", "timed_out", "action_required", "startup_failure"}
 
 
-def request(method, path, body=None, raw=False):
+def request(method, path, body=None, raw=False) -> Any:
     """Request a GitHub API endpoint and return the decoded JSON, or a file's bytes."""
     accept = "application/vnd.github.raw+json" if raw else "application/vnd.github+json"
     req = urllib.request.Request(
@@ -83,6 +91,163 @@ def cmd_piers():
     (RUN_DIR / "piers.txt").write_text("\n".join(lines) + "\n" if lines else "")
 
 
+def search(query):
+    """Search the upstream issues and pull requests, first page only."""
+    q = urllib.parse.quote(f"repo:{UPSTREAM} {query}")
+    return request("GET", f"/search/issues?q={q}&per_page=20")["items"]
+
+
+def pr_state(pr):
+    """Return a pull request's state as merged, draft, open or closed."""
+    if pr.get("merged") or (pr.get("pull_request") or {}).get("merged_at"):
+        return "merged"
+    return "draft" if pr["state"] == "open" and pr.get("draft") else pr["state"]
+
+
+def label_problems(title, labels, milestone):
+    """List the milestone, label and title rules the upstream mergeable check fails on."""
+    problems = []
+    if not milestone:
+        problems.append("no milestone")
+    elif "Abandoned" in milestone:
+        problems.append("milestone Abandoned")
+    if not any(re.search(r"^v|Infrastructure", name) for name in labels):
+        problems.append("no version label")
+    problems += [f"labeled {name}" for name in labels if BLOCKING_LABEL.match(name)]
+    tag = re.search(r"\[(RFC|WIP)\]", title)
+    if tag:
+        problems.append(f"{tag.group(0)} in title")
+    return problems
+
+
+def author_activity(pr):
+    """Return the latest commit or force push time and the author's last comment or review time."""
+    author, pushed, commented = pr["user"]["login"], "", ""
+    for event in paged(f"/repos/{UPSTREAM}/issues/{pr['number']}/timeline"):
+        kind = event["event"]
+        if kind == "committed":
+            pushed = max(pushed, event["committer"]["date"])
+        elif kind == "head_ref_force_pushed":
+            pushed = max(pushed, event["created_at"])
+        elif kind == "commented" and event["actor"]["login"] == author:
+            commented = max(commented, event["created_at"])
+        elif kind == "reviewed" and event["user"]["login"] == author:
+            commented = max(commented, event["submitted_at"])
+    return pushed, commented
+
+
+def review_status(pr):
+    """Return the standing approvals and change requests, and any push or author comment since."""
+    latest = {}
+    for review in paged(f"/repos/{UPSTREAM}/pulls/{pr['number']}/reviews"):
+        if review["state"] in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[review["user"]["login"]] = review
+    reviews = [{"login": login, "state": r["state"], "at": r["submitted_at"],
+                "team": r["author_association"] in ("MEMBER", "OWNER")}
+               for login, r in latest.items() if r["state"] != "DISMISSED"]
+    asks = [r for r in reviews if r["state"] == "CHANGES_REQUESTED"]
+    if asks:
+        pushed, commented = author_activity(pr)
+        for r in asks:
+            r["author_pushed_since"] = pushed > r["at"]
+            r["author_commented_since"] = commented > r["at"]
+    return reviews
+
+
+def build_status(pr):
+    """Return the head commit's test builds, naming the failing and pending ones."""
+    head = pr["head"]["sha"]
+    runs = request("GET", f"/repos/{UPSTREAM}/commits/{head}/check-runs?per_page=100")
+    states = {run["name"]: run["conclusion"] or "pending" for run in runs["check_runs"]}
+    for status in request("GET", f"/repos/{UPSTREAM}/commits/{head}/status")["statuses"]:
+        states[status["context"]] = status["state"]
+    builds = {BUILD_NAMES.get(name) or name: state for name, state in states.items()
+              if name not in NOT_BUILDS}
+    return {"count": len(builds), "failing": sorted(n for n, s in builds.items() if s in FAILED),
+            "pending": sorted(n for n, s in builds.items() if s == "pending")}
+
+
+def normalized_patch(file):
+    """Return a file's patch without hunk line numbers, or its blob sha when it has no patch."""
+    patch = file.get("patch")
+    return HUNK.sub("@@", patch) if patch is not None else f"blob {file['sha']}"
+
+
+def differing_files(ours, theirs):
+    """List the files whose changes differ between two pull requests, ignoring hunk line numbers."""
+    a = {f["filename"]: normalized_patch(f) for f in ours}
+    b = {f["filename"]: normalized_patch(f) for f in theirs}
+    return sorted(name for name in a.keys() | b.keys() if a.get(name) != b.get(name))
+
+
+def find_original(pr):
+    """Find the master pull request a backport copies, or None."""
+    text = f"{pr['title']}\n{pr['body'] or ''}"
+    for number in dict.fromkeys(BACKPORT_OF.findall(text) + re.findall(r"#(\d+)", pr["title"])):
+        try:
+            original = request("GET", f"/repos/{UPSTREAM}/pulls/{number}")
+        except urllib.error.HTTPError:
+            continue
+        if original["base"]["ref"] == "master":
+            return original
+    title = BACKPORT_TAG.sub("", pr["title"]).replace('"', "").strip()
+    for item in search(f'is:pr base:master in:title "{title}"'):
+        if item["title"].strip().casefold() == title.casefold():
+            return request("GET", f"/repos/{UPSTREAM}/pulls/{item['number']}")
+    return None
+
+
+def find_backports(pr):
+    """Find the Piers pull requests that mention a master one or share its title."""
+    title = pr["title"].replace('"', "").strip()
+    found = {item["number"]: pr_state(item) for item in search(f"is:pr base:Piers {pr['number']}")}
+    for item in search(f'is:pr base:Piers in:title "{title}"'):
+        if BACKPORT_TAG.sub("", item["title"]).strip().casefold() == title.casefold():
+            found[item["number"]] = pr_state(item)
+    return [{"number": number, "state": state} for number, state in found.items()]
+
+
+def backport_status(pr):
+    """Return a Piers backport's original, or the backports of a master pull request needing one."""
+    if pr["base"]["ref"] == "Piers":
+        original = find_original(pr)
+        if original is None:
+            return {"original": None}
+        ours = paged(f"/repos/{UPSTREAM}/pulls/{pr['number']}/files")
+        theirs = paged(f"/repos/{UPSTREAM}/pulls/{original['number']}/files")
+        return {"original": original["number"], "state": pr_state(original),
+                "differs": differing_files(ours, theirs)}
+    if "Backport: Needed" in [label["name"] for label in pr["labels"]]:
+        return {"backports": find_backports(pr)}
+    return None
+
+
+def cmd_status():
+    """Write where the upstream pull request stands to status.json, noting what was unavailable."""
+    status, unavailable = {}, []
+    try:
+        pr = request("GET", f"/repos/{UPSTREAM}/pulls/{os.environ['UPSTREAM_PR']}")
+    except Exception:
+        pr = None
+        unavailable.append("pull request")
+    if pr:
+        labels = [label["name"] for label in pr["labels"]]
+        milestone = (pr["milestone"] or {}).get("title")
+        status = {"state": pr_state(pr), "base": pr["base"]["ref"], "head": pr["head"]["sha"],
+                  "conflicts": pr["mergeable_state"] == "dirty", "labels": labels,
+                  "milestone": milestone,
+                  "label_problems": label_problems(pr["title"], labels, milestone)}
+        for key, part in (("reviews", review_status), ("builds", build_status),
+                          ("backport", backport_status)):
+            try:
+                status[key] = part(pr)
+            except Exception:
+                unavailable.append(key)
+    status["unavailable"] = unavailable
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "status.json").write_text(json.dumps(status, indent=1) + "\n")
+
+
 def attachable_lines(patch):
     """Return the line numbers on the new side of a patch that a review comment can point at."""
     lines, new = set(), 0
@@ -107,9 +272,93 @@ def load_result():
     return result
 
 
+def load_status():
+    """Load the status facts, or an empty dict when the status step wrote nothing usable."""
+    try:
+        return json.loads((RUN_DIR / "status.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def finding_text(finding):
     """Format one finding as comment markdown."""
     return f"**{finding['severity']}:** {finding['problem']}\n\n**Fix:** {finding['fix']}"
+
+
+def reviewer_text(review):
+    """Format one reviewer's standing approval or change request."""
+    who = review["login"] + (" (team)" if review["team"] else "")
+    if review["state"] == "APPROVED":
+        return f"approved by {who}"
+    answers = [word for word, done in (("pushed", review.get("author_pushed_since")),
+                                       ("commented", review.get("author_commented_since"))) if done]
+    answer = f"author {' and '.join(answers)} since" if answers else "no answer yet"
+    return f"changes requested by {who}, {answer}"
+
+
+def backport_text(backport):
+    """Format the backport facts that close the Kodi 22 line, or nothing when there are none."""
+    if not backport:
+        return ""
+    if "backports" in backport:
+        found = ", ".join(f"PR {b['number']} {b['state']}" for b in backport["backports"])
+        return f" Backport: {found or 'none yet'}."
+    if backport["original"] is None:
+        return " Original master PR not found."
+    state = {"merged": "merged", "closed": "closed unmerged"}.get(backport["state"],
+                                                                 "not merged yet")
+    differs = backport["differs"]
+    same = f"changes differ in {', '.join(differs)}" if differs else "same changes"
+    return f" Original PR {backport['original']} {state}, {same}."
+
+
+def status_lines(status, result):
+    """Format the Where it stands lines, skipping any with nothing to say."""
+    lines = []
+    if status.get("reviews"):
+        lines.append("Reviews: " + "; ".join(reviewer_text(r) for r in status["reviews"]))
+    builds = status.get("builds") or {}
+    if builds.get("failing"):
+        lines.append(f"Test builds: failing ({', '.join(builds['failing'])})")
+    elif builds.get("pending"):
+        lines.append(f"Test builds: pending ({', '.join(builds['pending'])})")
+    elif builds.get("count"):
+        lines.append("Test builds: passing")
+    if status.get("conflicts"):
+        lines.append(f"Conflicts: yes, needs a rebase onto {status['base']}")
+    if status.get("label_problems"):
+        lines.append("Labels: " + ", ".join(status["label_problems"]))
+    lines.append(f"Kodi 22: **{result['kodi22']}**. {result['kodi22_reason']}"
+                 + backport_text(status.get("backport")))
+    lines.append(f"Next: {result['next_step']}")
+    if status.get("unavailable"):
+        lines.append("Unavailable: " + ", ".join(status["unavailable"]))
+    return lines
+
+
+def place_findings(findings, lines):
+    """Place findings as comments on changed lines or as summary entries, without posting."""
+    inline, loose = [], []
+    for finding in findings:
+        if finding["line"] in lines.get(finding["path"], ()):
+            inline.append({"path": finding["path"], "line": finding["line"], "side": "RIGHT",
+                           "body": finding_text(finding)})
+        else:
+            loose.append(f"`{finding['path']}:{finding['line']}`\n{finding_text(finding)}")
+    return inline, loose
+
+
+def summary_text(result, status, head, inline_count, loose, rerun):
+    """Format the summary comment, the Where it stands block included."""
+    count = len(result["findings"])
+    parts = [f"**{result['verdict']}.** {result['summary']}",
+             f"{count} problem{'s' if count != 1 else ''}, {inline_count} on the changed lines."
+             if count else "No problems found."]
+    if loose:
+        parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
+    parts.append("**Where it stands**\n" + "\n".join(status_lines(status, result)))
+    parts.append(f"<sub>Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}.</sub>")
+    return "\n\n".join(parts)
 
 
 def upsert_summary(head, text):
@@ -130,29 +379,24 @@ def cmd_post():
         upsert_summary(head, "The review did not finish, so nothing was posted. Re-run it.")
         return
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
-    inline, loose = [], []
-    for finding in result["findings"]:
-        if finding["line"] in lines.get(finding["path"], ()):
-            inline.append({"path": finding["path"], "line": finding["line"], "side": "RIGHT",
-                           "body": finding_text(finding)})
-        else:
-            loose.append(f"`{finding['path']}:{finding['line']}`\n{finding_text(finding)}")
+    inline, loose = place_findings(result["findings"], lines)
     if inline:
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})
-    count = len(result["findings"])
-    verdict = f"**{result['verdict']}** · Kodi 22: **{result['kodi22']}**."
-    parts = [f"{verdict} {result['kodi22_reason']}", result["summary"],
-             f"{count} problem{'s' if count != 1 else ''}, {len(inline)} on the changed lines."
-             if count else "No problems found."]
-    if loose:
-        parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
-    rerun = " (new commits only)" if (RUN_DIR / "new.diff").exists() else ""
-    parts.append(f"<sub>Reviewed up to {head[:12]}{rerun}.</sub>")
-    upsert_summary(head, "\n\n".join(parts))
+    rerun = (RUN_DIR / "new.diff").exists()
+    upsert_summary(head, summary_text(result, load_status(), head, len(inline), loose, rerun))
 
 
-COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "post": cmd_post}
+def cmd_render():
+    """Render the summary comment a status.json and a result.json give, without posting."""
+    status = json.loads(Path(sys.argv[2]).read_text())
+    result = json.loads(Path(sys.argv[3]).read_text())
+    _, loose = place_findings(result["findings"], {})
+    print(summary_text(result, status, status.get("head", ""), 0, loose, False))
+
+
+COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status, "post": cmd_post,
+            "render": cmd_render}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()
