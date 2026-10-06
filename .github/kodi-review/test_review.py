@@ -19,7 +19,7 @@ def changed(name, patch, sha="0"):
 
 def block(status):
     """Return the Where it stands lines of the rendered summary."""
-    text = review.summary_text(RESULT, status, "f" * 40, 0, [], False)
+    text = review.summary_text(RESULT, status, "f" * 40, [], False)
     return text.split("**Where it stands**\n")[1].split("\n\n")[0].splitlines()
 
 
@@ -80,7 +80,7 @@ class LabelTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
-    """The Where it stands block."""
+    """The rendered summary comment."""
 
     def test_every_line(self):
         """Each fact gets its line, in order, before the reviewed line."""
@@ -97,8 +97,18 @@ class RenderTests(unittest.TestCase):
             "Labels: no milestone",
             "Kodi 22: **Yes, for 22.0**. Piers has the same bug. Backport: none yet.",
             "Next: A team member merges it."])
-        text = review.summary_text(RESULT, status, "f" * 40, 0, [], False)
+        text = review.summary_text(RESULT, status, "f" * 40, [], False)
+        self.assertTrue(text.startswith("**Ready to merge**\nFixes the crash.\n\n"))
         self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
+
+    def test_verdict_line_counts(self):
+        """The verdict line counts problems by severity, naming a lone one's severity alone."""
+        finding = {"severity": "Moderate"}
+        self.assertEqual(review.verdict_line(dict(RESULT, findings=[finding])),
+                         "**Ready to merge** · 1 problem (Moderate)")
+        findings = [{"severity": "Minor"}, {"severity": "Serious"}, {"severity": "Minor"}]
+        self.assertEqual(review.verdict_line(dict(RESULT, findings=findings)),
+                         "**Ready to merge** · 3 problems (1 Serious, 2 Minor)")
 
     def test_quiet_lines_skipped(self):
         """Reviews, conflicts and labels with nothing to say have their lines skipped."""

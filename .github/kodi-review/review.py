@@ -25,6 +25,7 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
 NOT_BUILDS = {"CodeRabbit", "Mergeable"}
 BUILD_NAMES = {"default": "Jenkins"}
 FAILED = {"failure", "error", "timed_out", "action_required", "startup_failure"}
+SEVERITIES = ("Serious", "Moderate", "Minor")
 CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
 UPSTREAM_LINK = re.compile(rf"(?:https?://)?(?:www\.)?github\.com/{re.escape(UPSTREAM)}/"
                            r"(?:pull|issues)/(\d+)(?:/[\w/-]*)?(?:[?#][\w=&-]*)?")
@@ -405,12 +406,20 @@ def place_findings(findings, lines):
     return inline, loose
 
 
-def summary_text(result, status, head, inline_count, loose, rerun):
+def verdict_line(result):
+    """Format the verdict in bold, then the problem count by severity when there are any."""
+    findings = result["findings"]
+    if not findings:
+        return f"**{result['verdict']}**"
+    counts = [f"{n} {s}" for s in SEVERITIES if (n := sum(f["severity"] == s for f in findings))]
+    detail = findings[0]["severity"] if len(findings) == 1 else ", ".join(counts)
+    plural = "s" if len(findings) != 1 else ""
+    return f"**{result['verdict']}** · {len(findings)} problem{plural} ({detail})"
+
+
+def summary_text(result, status, head, loose, rerun):
     """Format the summary comment, the Where it stands block included."""
-    count = len(result["findings"])
-    parts = [f"**{result['verdict']}.** {result['summary']}",
-             f"{count} problem{'s' if count != 1 else ''}, {inline_count} on the changed lines."
-             if count else "No problems found."]
+    parts = [f"{verdict_line(result)}\n{result['summary']}"]
     if loose:
         parts.append("Not on a changed line:\n\n" + "\n\n".join(loose))
     parts.append("**Where it stands**\n" + "\n".join(status_lines(status, result)))
@@ -439,7 +448,7 @@ def cmd_post():
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
-    summary = unlinked(summary_text(result, load_status(), head, len(inline), loose, rerun))
+    summary = unlinked(summary_text(result, load_status(), head, loose, rerun))
     for comment in inline:
         comment["body"] = unlinked(comment["body"])
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
@@ -456,7 +465,7 @@ def cmd_render():
     status = json.loads(Path(sys.argv[2]).read_text())
     result = json.loads(Path(sys.argv[3]).read_text())
     _, loose = place_findings(result["findings"], {})
-    print(unlinked(summary_text(result, status, status.get("head", ""), 0, loose, False)))
+    print(unlinked(summary_text(result, status, status.get("head", ""), loose, False)))
 
 
 COMMANDS = {"prev": cmd_prev, "piers": cmd_piers, "status": cmd_status,
