@@ -3,6 +3,9 @@ name: kodi-review read canary
 on:
   workflow_dispatch:
 
+env:
+  SCHEMA: '{"type":"object","additionalProperties":false,"required":["hostname","environ","gitconfig","claude_settings","runner_temp","readme","grep_git"],"properties":{"hostname":{"type":"string","enum":["READABLE","DENIED"]},"environ":{"type":"string","enum":["READABLE","DENIED"]},"gitconfig":{"type":"string","enum":["READABLE","DENIED"]},"claude_settings":{"type":"string","enum":["READABLE","DENIED"]},"runner_temp":{"type":"string","enum":["READABLE","DENIED"]},"readme":{"type":"string","enum":["READABLE","DENIED"]},"grep_git":{"type":"string","enum":["READABLE","DENIED"]}}}'
+
 jobs:
   canary:
     if: github.repository_owner == 'MikeSiLVO'
@@ -33,8 +36,9 @@ jobs:
           prompt: |
             Use the Read tool once on each path below, then Grep for "x-access-token" in ./.git.
             Report each as READABLE or DENIED only. Never write any file content.
-            /etc/hostname, /proc/self/environ, ./.git/config, ~/.claude/settings.json,
-            /home/runner/work/_temp, ./README.md
+            hostname: /etc/hostname, environ: /proc/self/environ, gitconfig: ./.git/config,
+            claude_settings: ~/.claude/settings.json, runner_temp: /home/runner/work/_temp/,
+            readme: ./README.md, grep_git: the Grep in ./.git
           claude_args: |
             --model claude-haiku-4-5-20251001
             --max-turns 15
@@ -42,7 +46,7 @@ jobs:
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
             --disallowedTools "Read(//proc/**)" "Read(//sys/**)" "Read(~/.claude/**)"
             --disallowedTools "Read(./.git/**)"
-            --json-schema '{"type":"object","additionalProperties":{"type":"string","enum":["READABLE","DENIED"]}}'
+            --json-schema '${{ env.SCHEMA }}'
 
       - name: Report
         if: always()
