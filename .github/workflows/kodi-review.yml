@@ -175,9 +175,10 @@ jobs:
             --effort medium
             --max-turns 40
             --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
-            --allowedTools "Read,Grep,Glob"
+            --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
             --disallowedTools "Read(//proc/**)" "Read(//sys/**)" "Read(~/.claude/**)"
+            --disallowedTools "Read(./.git/**)"
             --json-schema '${{ steps.prep.outputs.schema }}'
 
       - name: Post the review
