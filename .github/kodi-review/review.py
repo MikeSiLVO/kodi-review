@@ -374,6 +374,16 @@ def load_prior():
     return prior if isinstance(prior, list) else []
 
 
+def open_spots(prior, fixed):
+    """Map each still-open earlier finding's file and line to its severity, once per spot."""
+    spots = {}
+    for f in prior:
+        m = PRIOR_SEVERITY.match(f.get("finding") or "")
+        if m and f.get("id") not in fixed:
+            spots.setdefault((f.get("path"), f.get("line")), m.group(1))
+    return spots
+
+
 def load_status():
     """Load the status facts, or an empty dict when the status step wrote nothing usable."""
     try:
@@ -527,21 +537,23 @@ def upsert_summary(sha, text):
 
 
 def cmd_post():
-    """Post findings, resolve fixed earlier ones, or note a failure; exit 1 on a credential."""
+    """Post new findings, resolve fixed earlier ones, or note a failure; exit 1 on a credential."""
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
         upsert_summary(reviewed_sha(),
                        "The review did not finish, so nothing was posted. Re-run it.")
         return
-    lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
-    inline, loose = place_findings(result["findings"], lines)
-    rerun = (RUN_DIR / "new.diff").exists()
     prior = load_prior()
     listed = {f.get("id") for f in prior}
     fixed = [tid for tid in dict.fromkeys(result.get("fixed") or []) if tid in listed]
-    still_open = [{"severity": m.group(1)} for f in prior if f.get("id") not in fixed
-                  and (m := PRIOR_SEVERITY.match(f.get("finding") or ""))]
+    spots = open_spots(prior, fixed)
+    result = dict(result, findings=[f for f in result["findings"]
+                                    if (f["path"], f["line"]) not in spots])
+    lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
+    inline, loose = place_findings(result["findings"], lines)
+    rerun = (RUN_DIR / "new.diff").exists()
+    still_open = [{"severity": severity} for severity in spots.values()]
     summary = unlinked(summary_text(result, load_status(), head, loose, rerun, len(fixed),
                                     still_open))
     for comment in inline:

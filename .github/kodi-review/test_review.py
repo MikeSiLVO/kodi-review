@@ -322,6 +322,32 @@ class PriorTests(unittest.TestCase):
         self.assertIn("### Needs more work · 1 problem (Moderate)", body)
 
 
+class RepeatTests(unittest.TestCase):
+    """New findings at a spot an earlier finding still holds."""
+
+    def test_repeat_dropped_and_counted_once(self):
+        """A repeat at an open spot is not posted, and duplicate open threads count once."""
+        prior = [{"id": "T1", "path": "a.cpp", "line": 2, "finding": "**Serious: Old**"},
+                 {"id": "T2", "path": "a.cpp", "line": 2, "finding": "**Serious:** Older"}]
+        repeat = {"path": "a.cpp", "line": 2, "severity": "Serious", "title": "Again",
+                  "problem": "Same.", "fix": "Same."}
+        other = dict(repeat, line=3, severity="Moderate", title="New")
+        result = dict(RESULT, verdict="Needs more work", findings=[repeat, other])
+        files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=files), \
+                mock.patch.object(review, "load_prior", return_value=prior), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}):
+            review.cmd_post()
+        posted = request.call_args_list[0].args[2]["comments"]
+        self.assertEqual([c["line"] for c in posted], [3])
+        summary = request.call_args_list[1].args[2]["body"]
+        self.assertIn("### Needs more work · 2 problems (1 Serious, 1 Moderate)", summary)
+        self.assertIn("1 earlier finding still open.", summary)
+
+
 class WithheldTests(unittest.TestCase):
     """Review output that looks like it carries a credential."""
 
