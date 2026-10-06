@@ -1,6 +1,8 @@
 """Offline tests for the review helpers: patch comparison, label rules, Where it stands block."""
 
+import os
 import unittest
+from unittest import mock
 
 import review
 
@@ -129,6 +131,32 @@ class RenderTests(unittest.TestCase):
             "Kodi 22: **Yes, for 22.0**. Piers has the same bug.",
             "Next: A team member merges it.",
             "Unavailable: pull request"])
+
+
+class FailedRunTests(unittest.TestCase):
+    """Failed runs, which keep the recorded commit."""
+
+    def post_failure(self, comment):
+        """Post a failure through cmd_post with or without a summary comment, return the body."""
+        with mock.patch.object(review, "summary_comment", return_value=comment), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7", "RESULT": ""}):
+            review.cmd_post()
+        return request.call_args.args[2]["body"]
+
+    def test_keeps_reviewed_commit(self):
+        """The marker keeps the commit the last finished review covered."""
+        comment = {"id": 1, "body": f"<!-- kodi-review sha={'a' * 40} -->\nold"}
+        body = self.post_failure(comment)
+        self.assertTrue(body.startswith(f"<!-- kodi-review sha={'a' * 40} -->"))
+
+    def test_first_failure_leaves_empty_marker(self):
+        """A failed first run leaves an empty marker that still matches as no reviewed commit."""
+        body = self.post_failure(None)
+        self.assertTrue(body.startswith("<!-- kodi-review sha= -->"))
+        self.assertIsNotNone(review.MARKER.match(body))
+        with mock.patch.object(review, "summary_comment", return_value={"id": 1, "body": body}):
+            self.assertEqual(review.reviewed_sha(), "")
 
 
 if __name__ == "__main__":

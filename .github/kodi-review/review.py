@@ -14,7 +14,7 @@ API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
 RUN_DIR = Path(".kodi-review-run")
-MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}) -->")
+MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 PIERS_FILE_LIMIT = 40
 REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
@@ -66,10 +66,16 @@ def changed_files():
     return list(paged(f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/files"))
 
 
-def cmd_prev():
-    """Print the head commit the last review covered, or nothing."""
+def reviewed_sha():
+    """Return the head commit the last finished review covered, or an empty string."""
     comment = summary_comment()
-    print(MARKER.match(comment["body"]).group(1) if comment else "")
+    match = MARKER.match(comment["body"]) if comment else None
+    return match.group(1) if match else ""
+
+
+def cmd_prev():
+    """Print the last reviewed commit for the prep step, or nothing for a full review."""
+    print(reviewed_sha())
 
 
 def cmd_piers():
@@ -361,9 +367,9 @@ def summary_text(result, status, head, inline_count, loose, rerun):
     return "\n\n".join(parts)
 
 
-def upsert_summary(head, text):
-    """Upsert the summary comment, tagged with the head commit it covers."""
-    body = f"<!-- kodi-review sha={head} -->\n{text}"
+def upsert_summary(sha, text):
+    """Upsert the summary comment, tagged with the commit the last finished review covered."""
+    body = f"<!-- kodi-review sha={sha} -->\n{text}"
     comment = summary_comment()
     if comment:
         request("PATCH", f"/repos/{REPO}/issues/comments/{comment['id']}", {"body": body})
@@ -376,7 +382,8 @@ def cmd_post():
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
-        upsert_summary(head, "The review did not finish, so nothing was posted. Re-run it.")
+        upsert_summary(reviewed_sha(),
+                       "The review did not finish, so nothing was posted. Re-run it.")
         return
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
