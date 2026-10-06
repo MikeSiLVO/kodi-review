@@ -142,6 +142,12 @@ jobs:
             > .kodi-review-run/pr.json
           python3 "$BOT/review.py" status || echo "Status unavailable"
           python3 "$BOT/review.py" discussion || echo "Discussion unavailable"
+          for rules in AGENTS.md docs/CODE_GUIDELINES.md; do
+            out=".kodi-review-run/$(basename "$rules")"
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/$GITHUB_REPOSITORY/contents/$rules?ref=review/$UPSTREAM_PR-base" > "$out" \
+              || rm -f "$out"
+          done
           gh pr diff "$FORK_PR" --repo "$GITHUB_REPOSITORY" > .kodi-review-run/full.diff
           prev=$(python3 "$BOT/review.py" prev)
           if [ -n "$prev" ] && [ "$prev" != "$HEAD_SHA" ]; then
