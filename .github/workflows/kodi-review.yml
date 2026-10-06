@@ -1,4 +1,4 @@
-name: Kodi PR review
+name: kodi-review
 
 on:
   workflow_dispatch:
