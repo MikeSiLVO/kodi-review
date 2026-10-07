@@ -493,10 +493,9 @@ class TrimTests(unittest.TestCase):
 class TriggerTests(unittest.TestCase):
     """Deciding whether a comment may start a run, and whether it asks for a review or answer."""
 
-    def run_trigger(self, comment, access="write", asker="issue/5"):
-        """Run the trigger on fake replies; store its mode, return the requests and exit code."""
+    def run_trigger(self, comment, access="write", asker="issue/5", mode="review"):
+        """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
-        self.mode = ""
 
         def reply(method, path, body=None, raw=False):
             """Reply like GitHub for the comment and the commenter's access."""
@@ -509,10 +508,8 @@ class TriggerTests(unittest.TestCase):
             if method == "GET":
                 return comment
             return None
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(review, "request", side_effect=reply), \
-                mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7",
-                                             "GITHUB_OUTPUT": str(Path(tmp, "out"))}):
+        with mock.patch.object(review, "request", side_effect=reply), \
+                mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode}):
             try:
                 review.cmd_trigger()
             except SystemExit as stop:
@@ -520,8 +517,6 @@ class TriggerTests(unittest.TestCase):
             finally:
                 for refusal in refusals:
                     refusal.close()
-                out = Path(tmp, "out")
-                self.mode = out.read_text() if out.exists() else ""
         return calls, None
 
     def comment(self, body="@kodi-review review", url="https://api.github.com/repos/o/r/issues/7"):
@@ -533,7 +528,6 @@ class TriggerTests(unittest.TestCase):
         calls, code = self.run_trigger(self.comment())
         self.assertIsNone(code)
         self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
-        self.assertEqual(self.mode, "mode=review\n")
 
     def test_anything_but_review_is_a_question(self):
         """Review or nothing after the mention asks for a review; other words ask a question."""
@@ -542,14 +536,17 @@ class TriggerTests(unittest.TestCase):
                            ("Hey @kodi-review, is the lock needed?", "answer"),
                            ("@kodi-review", "review"),
                            ("@kodi-review!", "review")):
-            self.run_trigger(self.comment(body=body))
-            self.assertEqual(self.mode, f"mode={mode}\n", body)
+            other = "answer" if mode == "review" else "review"
+            self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+            calls, code = self.run_trigger(self.comment(body=body), mode=other)
+            self.assertTrue(code, body)
+            self.assertNotIn("POST", [method for method, _ in calls])
 
     def test_line_comment_is_read_from_pulls(self):
         """A line comment is read from the pull request comments and passes."""
         comment = {"body": "@KODI-REVIEW why?", "user": {"login": "dev"},
                    "pull_request_url": "https://api.github.com/repos/o/r/pulls/7"}
-        calls, code = self.run_trigger(comment, asker="review/6")
+        calls, code = self.run_trigger(comment, asker="review/6", mode="answer")
         self.assertIsNone(code)
         self.assertEqual(calls[0], ("GET", f"/repos/{review.REPO}/pulls/comments/6"))
 

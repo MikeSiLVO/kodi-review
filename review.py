@@ -656,7 +656,7 @@ def asking_comment():
 
 
 def cmd_trigger():
-    """Exit 1 unless a writer's comment here mentions the bot; react and record review or answer."""
+    """Exit 1 unless a writer's comment here asks the bot for this run's mode; react to it."""
     kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
     comment = request("GET", path)
@@ -672,14 +672,13 @@ def cmd_trigger():
         access = "none"
     if access not in CAN_ASK:
         sys.exit(f"{login} has {access} access; asking the bot needs write access.")
+    asked = "review" if REVIEW_ASK.match(body, mention.end()) else "answer"
+    if asked != os.environ.get("MODE", "review"):
+        sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
     try:
         request("POST", f"{path}/reactions", {"content": "eyes"})
     except urllib.error.URLError as err:
         print(f"Could not react: {err}")
-    mode = "review" if REVIEW_ASK.match(body, mention.end()) else "answer"
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-            out.write(f"mode={mode}\n")
 
 
 def thread_text(comments):

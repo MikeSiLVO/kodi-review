@@ -49,6 +49,7 @@ env:
   FORK_PR: ${{ inputs.pr }}
   REPLAY_SHA: ${{ inputs.sha }}
   COMMENT: ${{ inputs.comment }}
+  MODE: ${{ inputs.mode || 'review' }}
 
 jobs:
   trigger:
@@ -57,9 +58,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-    outputs:
-      allowed: ${{ steps.check.outcome == 'success' }}
-      mode: ${{ steps.check.outputs.mode }}
     steps:
       - name: Check out the review bot
         uses: actions/checkout@v6
@@ -86,28 +84,23 @@ jobs:
           permission-pull-requests: write
 
       - name: Check the comment that asked for the bot
-        id: check
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: python3 bot/review.py trigger
 
   review:
-    needs: trigger
-    if: >-
-      github.repository_owner == 'MikeSiLVO' && !cancelled()
-      && (inputs.comment == '' || needs.trigger.outputs.allowed == 'true')
+    if: github.repository_owner == 'MikeSiLVO'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
+      actions: read
     outputs:
       prepared: ${{ steps.prep.outputs.prepared }}
       head_sha: ${{ steps.refs.outputs.head_sha }}
     env:
       GH_TOKEN: ${{ github.token }}
       BOT: .kodi-review-bot
-      MODE: ${{ needs.trigger.outputs.mode || 'review' }}
     steps:
       - name: Find the commits to review
         id: refs
@@ -216,6 +209,22 @@ jobs:
             sudo apt-get install -y --no-install-recommends bubblewrap socat
           }
 
+      - name: Wait for the check on the comment that asked
+        if: inputs.comment != ''
+        run: |
+          jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
+          for _ in $(seq 120); do
+            state=$(gh api "$jobs" --jq '.jobs[] | select(.name == "trigger")
+              | "\(.status) \(.conclusion)"')
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "The comment did not pass the check: $state"; exit 1 ;;
+            esac
+            sleep 2
+          done
+          echo "The check did not finish in time"
+          exit 1
+
       - name: Review
         id: claude
         uses: anthropics/claude-code-action@v1
@@ -275,14 +284,15 @@ jobs:
 
   post:
     needs: [trigger, review]
-    if: ${{ !cancelled() && needs.review.outputs.prepared == 'true' }}
+    if: >-
+      ${{ !cancelled() && needs.review.outputs.prepared == 'true'
+      && (inputs.comment == '' || needs.trigger.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     env:
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
-      MODE: ${{ needs.trigger.outputs.mode || 'review' }}
     steps:
       - name: Check out the review bot
         uses: actions/checkout@v6
