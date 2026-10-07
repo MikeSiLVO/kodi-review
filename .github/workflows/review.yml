@@ -132,6 +132,7 @@ jobs:
           done
           python3 "$BOT/review.py" piers
           echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
+          echo "files=$(cd .kodi-review-run && ls -dp -- * | paste -sd' ')" >> "$GITHUB_OUTPUT"
           echo "prepared=true" >> "$GITHUB_OUTPUT"
 
       - name: Install bubblewrap for the subprocess env scrub
@@ -150,8 +151,9 @@ jobs:
           settings: '{"permissions": {"blockReadsOutsideWorkingDirectories": true}}'
           prompt: |
             Review pull request ${{ inputs.pr }} in ${{ env.UPSTREAM }}. Follow the review
-            instructions in your system prompt. Read the prepared files your instructions name in
-            your first turn, then return the result in the required structured format.
+            instructions in your system prompt. The prepared files in .kodi-review-run are:
+            ${{ steps.prep.outputs.files }}. Read the ones your instructions name in your first
+            turn, then return the result in the required structured format.
           claude_args: |
             --model claude-opus-5-5
             --effort ${{ inputs.effort || 'high' }}
