@@ -20,18 +20,20 @@ jobs:
       - name: Close mirrors of upstream PRs that are no longer open
         run: |
           set -euo pipefail
-          numbers=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/review/" \
-            --jq '.[].ref | sub("^refs/heads/review/"; "") | sub("-base$"; "")' | sort -un)
+          refs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/review/" \
+            --jq '.[].ref | sub("^refs/heads/"; "")')
+          numbers=$(grep -oE '^review/[0-9]+' <<<"$refs" | cut -d/ -f2 | sort -un || true)
+          open_prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 500 \
+            --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"')
           for n in $numbers; do
-            [[ "$n" =~ ^[0-9]+$ ]] || continue
-            state=$(gh api "repos/$UPSTREAM/pulls/$n" --jq 'if .merged then "merged" else .state end')
+            state=$(gh api "repos/$UPSTREAM/pulls/$n" \
+              --jq 'if .merged then "merged" else .state end')
             [ "$state" = open ] && continue
-            for pr in $(gh pr list --repo "$GITHUB_REPOSITORY" --head "review/$n" --state open \
-                --json number --jq '.[].number'); do
+            for pr in $(grep -E " review/$n(-|$)" <<<"$open_prs" | cut -d' ' -f1 || true); do
               gh pr close "$pr" --repo "$GITHUB_REPOSITORY"
             done
-            for ref in "review/$n" "review/$n-base"; do
+            for ref in $(grep -E "^review/$n(-|$)" <<<"$refs"); do
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$ref" || true
             done
-            echo "Upstream PR $n is $state: mirror closed, branches deleted"
+            echo "Upstream PR $n is $state: mirrors closed, branches deleted"
           done
