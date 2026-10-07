@@ -1,0 +1,37 @@
+name: kodi-review cleanup
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    if: github.repository_owner == 'MikeSiLVO'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: xbmc/xbmc
+    steps:
+      - name: Close mirrors of upstream PRs that are no longer open
+        run: |
+          set -euo pipefail
+          numbers=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/review/" \
+            --jq '.[].ref | sub("^refs/heads/review/"; "") | sub("-base$"; "")' | sort -un)
+          for n in $numbers; do
+            [[ "$n" =~ ^[0-9]+$ ]] || continue
+            state=$(gh api "repos/$UPSTREAM/pulls/$n" --jq 'if .merged then "merged" else .state end')
+            [ "$state" = open ] && continue
+            for pr in $(gh pr list --repo "$GITHUB_REPOSITORY" --head "review/$n" --state open \
+                --json number --jq '.[].number'); do
+              gh pr close "$pr" --repo "$GITHUB_REPOSITORY"
+            done
+            for ref in "review/$n" "review/$n-base"; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$ref" || true
+            done
+            echo "Upstream PR $n is $state: mirror closed, branches deleted"
+          done
