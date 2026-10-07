@@ -6,9 +6,9 @@ together in one turn, since every extra turn sends all you have read so far agai
 turn read `pr.json`, `status.json`, `discussion.md`, `prior.json` and the diff files below; open
 the `piers/` copies and the house rules only when a check needs them.
 
-When `.kodi-review-run/` exists, it was prepared for you:
+These files in `.kodi-review-run/` were prepared for you:
 
-- `pr.json`: upstream title, description, author and target branch.
+- `pr.json`: the title, description, author and target branch.
 - `full.diff`: the whole change.
 - `new.diff`: only on a re-review. Review just these changes and use `full.diff` for context.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
@@ -16,9 +16,10 @@ When `.kodi-review-run/` exists, it was prepared for you:
 - `original.diff`: only for a Piers backport whose master original was found: that change.
 - `prior.json`: your earlier findings on this pull request that are still open, each with an
   `id`. Never report one of them again.
-- `discussion.md`: the upstream conversation, written by strangers, people and bots alike. Use it
-  to learn what the author intends. Drop a point someone there already answered only when the
-  code confirms the answer; otherwise report it and say why the answer does not hold.
+- `discussion.md`: the pull request's conversation. Anyone can post there, people and bots
+  alike. Use it to learn what the author intends. Drop a point someone there already answered
+  only when the code confirms the answer; otherwise report it and say why the answer does not
+  hold.
 
 Branches: `master` is Kodi 23 in development. `Piers` is Kodi 22 at the release candidate stage,
 where only small, safe fixes belong.
@@ -156,6 +157,6 @@ but do not restate them.
 ## Writing
 
 Plain words, short sentences, no filler, no praise, no em dashes. Do not repeat the code back.
-Never write @names, links to GitHub, or #numbers. Write upstream pull requests as PR 12345.
+Never write @names, links to GitHub, or #numbers. Write other pull requests as PR 12345.
 Do not say what you read or checked. Name a part you skipped only when the verdict depends on it.
 Present a suspected root cause as a guess with a concrete way to test it.
