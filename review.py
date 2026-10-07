@@ -80,7 +80,7 @@ def paged(path):
 
 
 def summary_comment():
-    """Return the bot's summary comment on the mirrored pull request, or None."""
+    """Return the bot's summary comment on the pull request, or None."""
     for comment in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments"):
         if comment["user"]["type"] == "Bot" and MARKER.match(comment["body"]):
             return comment
@@ -379,7 +379,7 @@ def open_findings(threads):
 
 
 def cmd_prior():
-    """Write the bot's open findings on the mirrored pull request to prior.json."""
+    """Write the bot's open findings on the pull request to prior.json."""
     owner, name = REPO.split("/")
     threads, after = [], None
     while True:
