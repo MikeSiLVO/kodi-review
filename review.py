@@ -747,12 +747,14 @@ def cmd_render():
 
 
 def usage_lines(messages):
-    """List each tool call with the size of its result, then the token totals; no contents."""
-    calls, lines = {}, []
+    """List each tool call with its result size, the calls per turn, then the token totals."""
+    calls, lines, per_turn = {}, [], {}
     for m in messages:
         content = (m.get("message") or {}).get("content")
         for part in content if isinstance(content, list) else []:
             if part.get("type") == "tool_use":
+                turn = (m.get("message") or {}).get("id")
+                per_turn[turn] = per_turn.get(turn, 0) + 1
                 given = part.get("input") or {}
                 target = given.get("file_path") or given.get("path") or ""
                 span = f"{given.get('offset', 0)}+{given['limit']}" if "limit" in given else ""
@@ -762,6 +764,8 @@ def usage_lines(messages):
                 body = part.get("content")
                 size = len(body) if isinstance(body, str) else len(json.dumps(body))
                 lines.append(f"{size:>8} chars  {calls.get(part.get('tool_use_id'), '?')}")
+    if per_turn:
+        lines.append("calls per turn " + " ".join(str(n) for n in per_turn.values()))
     for m in messages:
         if m.get("type") == "result":
             lines.append(f"tokens {json.dumps(m.get('usage'))} turns {m.get('num_turns')} "
