@@ -12,11 +12,11 @@ on:
         required: false
         type: string
       effort:
-        description: "Reasoning effort; a level other than medium gets its own mirror PR"
+        description: "Reasoning effort; a level other than high gets its own mirror PR"
         required: false
         type: choice
-        default: medium
-        options: [medium, high]
+        default: high
+        options: [high, medium]
 
 concurrency:
   group: kodi-review-${{ inputs.pr }}
@@ -26,7 +26,7 @@ env:
   UPSTREAM: xbmc/xbmc
   UPSTREAM_PR: ${{ inputs.pr }}
   REPLAY_SHA: ${{ inputs.sha }}
-  EFFORT: ${{ inputs.effort || 'medium' }}
+  EFFORT: ${{ inputs.effort || 'high' }}
 
 jobs:
   mirror:
@@ -60,7 +60,7 @@ jobs:
             head_sha=$(jq -r .head.sha <<<"$meta")
             branch="review/$UPSTREAM_PR"
           fi
-          if [ "$EFFORT" != medium ]; then branch+="-$EFFORT"; fi
+          if [ "$EFFORT" != high ]; then branch+="-$EFFORT"; fi
           base_sha=$(gh api "repos/$UPSTREAM/compare/$base_ref...$head_sha" \
             --jq .merge_base_commit.sha)
 
@@ -115,7 +115,7 @@ jobs:
             title="Blind review of upstream PR $UPSTREAM_PR at ${HEAD_SHA:0:12}: $TITLE"
             body+=" Blind replay: reviewed without the discussion, status or earlier findings."
           fi
-          if [ "$EFFORT" != medium ]; then title+=" ($EFFORT effort)"; fi
+          if [ "$EFFORT" != high ]; then title+=" ($EFFORT effort)"; fi
           number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" \
             --state open --json number --jq '.[0].number // empty')
           if [ -z "$number" ]; then
@@ -218,7 +218,7 @@ jobs:
             return the result in the required structured format.
           claude_args: |
             --model claude-opus-5-5
-            --effort ${{ inputs.effort || 'medium' }}
+            --effort ${{ inputs.effort || 'high' }}
             --max-turns 40
             --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
             --permission-mode dontAsk
