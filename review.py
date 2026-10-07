@@ -50,6 +50,10 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
 }}}}"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
+ACCEPTED_NOTE = "**Accepted by {}:** {}\n\n"
+SETTLED = re.compile(r"^\*\*(Fixed in|Withdrawn:|Accepted by)[^\n]*\n\n"
+                     r"(\*\*(?:Serious|Moderate|Minor)\b.*)")
+SETTLED_STATUS = {"Fixed in": "fixed", "Withdrawn:": "withdrawn", "Accepted by": "accepted"}
 NO_ANSWER = "I could not finish an answer. Ask again."
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
@@ -372,23 +376,28 @@ def graphql(query, **variables):
     return reply["data"]
 
 
-def open_findings(threads):
-    """Return the bot's unresolved threads not yet marked fixed that nobody else replied to."""
+def earlier_findings(threads):
+    """Return the bot's findings, each open or settled, with its first line."""
     found = []
     for t in threads:
         comments = t["comments"]["nodes"]
-        first = (comments[0]["author"] or {}) if comments else {}
-        if (t["isResolved"] or first.get("__typename") != "Bot"
-                or not PRIOR_SEVERITY.match(comments[0]["body"])
-                or any((c["author"] or {}).get("login") != first.get("login") for c in comments)):
+        if not comments or (comments[0]["author"] or {}).get("__typename") != "Bot":
+            continue
+        body = comments[0]["body"]
+        settled = SETTLED.match(body)
+        if settled:
+            status, finding = SETTLED_STATUS[settled.group(1)], settled.group(2)
+        elif PRIOR_SEVERITY.match(body):
+            status, finding = "resolved" if t["isResolved"] else "open", body.split("\n", 1)[0]
+        else:
             continue
         found.append({"id": t["id"], "comment": comments[0].get("databaseId"), "path": t["path"],
-                      "line": t["line"], "finding": comments[0]["body"].split("\n", 1)[0][:160]})
+                      "line": t["line"], "status": status, "finding": finding[:160]})
     return found
 
 
 def cmd_prior():
-    """Write the bot's open findings on the pull request to prior.json."""
+    """Write the bot's findings on the pull request, open and settled, to prior.json."""
     owner, name = REPO.split("/")
     threads, after = [], None
     while True:
@@ -400,11 +409,11 @@ def cmd_prior():
             break
         after = page["pageInfo"]["endCursor"]
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "prior.json").write_text(json.dumps(open_findings(threads), indent=1) + "\n")
+    (RUN_DIR / "prior.json").write_text(json.dumps(earlier_findings(threads), indent=1) + "\n")
 
 
 def load_prior():
-    """Load the open findings the prep step listed, or none."""
+    """Load the earlier findings the prep step listed, or none."""
     try:
         prior = json.loads((RUN_DIR / "prior.json").read_text())
     except (OSError, json.JSONDecodeError):
@@ -412,12 +421,12 @@ def load_prior():
     return prior if isinstance(prior, list) else []
 
 
-def open_spots(prior, fixed):
-    """Map each still-open earlier finding's file and line to its severity, once per spot."""
+def finding_spots(prior, fixed, statuses=("open",)):
+    """Map each unfixed earlier finding's file and line to its severity, open ones by default."""
     spots = {}
     for f in prior:
         m = PRIOR_SEVERITY.match(f.get("finding") or "")
-        if m and f.get("id") not in fixed:
+        if m and f.get("status", "open") in statuses and f.get("id") not in fixed:
             spots.setdefault((f.get("path"), f.get("line")), m.group(1))
     return spots
 
@@ -605,9 +614,9 @@ def cmd_post():
                        "The review did not finish, so nothing was posted. Re-run it.")
         return
     prior = load_prior()
-    listed = {f.get("id") for f in prior}
+    listed = {f.get("id") for f in prior if f.get("status", "open") == "open"}
     fixed = [tid for tid in dict.fromkeys(result.get("fixed") or []) if tid in listed]
-    spots = open_spots(prior, fixed)
+    spots = finding_spots(prior, fixed, ("open", "withdrawn", "accepted", "resolved"))
     rank = SEVERITIES.index
     result = dict(result, findings=[
         f for f in result["findings"] if (f["path"], f["line"]) not in spots
@@ -615,7 +624,7 @@ def cmd_post():
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
-    still_open = [{"severity": severity} for severity in spots.values()]
+    still_open = [{"severity": severity} for severity in finding_spots(prior, fixed).values()]
     status = load_status()
     summary = unlinked(summary_text(result, status, head, loose, rerun, len(fixed), still_open))
     for comment in inline:
@@ -674,13 +683,13 @@ def thread_text(comments):
 
 
 def cmd_question():
-    """Write the asking comment and thread to question.md, its ids and quote to question.json."""
+    """Write the question and thread to question.md, its ids, asker and quote to question.json."""
     kind, number = asking_comment()
     pr = os.environ["FORK_PR"]
     thread, finding = [], None
     if kind == "issue":
         asked = request("GET", f"/repos/{REPO}/issues/comments/{number}")
-        where = "Asked in the main conversation, so leave withdraw empty."
+        where = "Asked in the main conversation, so leave withdraw and accept empty."
     else:
         asked = request("GET", f"/repos/{REPO}/pulls/comments/{number}")
         top = asked.get("in_reply_to_id") or asked["id"]
@@ -693,20 +702,21 @@ def cmd_question():
             finding = first["id"]
         line = asked.get("line") or asked.get("original_line")
         where = (f"Asked in the thread on {asked.get('path')}, line {line}. "
-                 + ("Its first comment is your finding; withdraw only that one."
-                    if finding else "No finding of yours is open there, so leave withdraw empty.")
+                 + ("Its first comment is your finding; withdraw or accept only that one."
+                    if finding else "No finding of yours is open there, so leave withdraw and "
+                    "accept empty.")
                  + f"\n\nThe thread, oldest first:\n\n{thread_text(thread)}")
     login = (asked.get("user") or {}).get("login", "ghost")
     question = (asked.get("body") or "").strip()[:QUOTE_LIMIT]
     RUN_DIR.mkdir(exist_ok=True)
     (RUN_DIR / "question.md").write_text(f"Question from {login}:\n\n{question}\n\n{where}\n")
     (RUN_DIR / "question.json").write_text(json.dumps(
-        {"kind": kind, "comment": int(number), "finding": finding,
+        {"kind": kind, "comment": int(number), "finding": finding, "asker": login,
          "quote": question.split("\n", 1)[0][:300]}) + "\n")
 
 
 def cmd_reply():
-    """Reply to the asker, withdraw a conceded finding; withhold a leaked credential and exit 1."""
+    """Reply to the asker, settle a disputed finding; withhold a leaked credential and exit 1."""
     asked = json.loads((RUN_DIR / "question.json").read_text())
     try:
         result = json.loads(os.environ.get("RESULT") or "null")
@@ -715,9 +725,10 @@ def cmd_reply():
     result = result if isinstance(result, dict) else {}
     reply = unlinked((result.get("reply") or "").strip()) or NO_ANSWER
     withdraw = unlinked((result.get("withdraw") or "").strip())
-    leaked = CREDENTIAL.search(reply) or CREDENTIAL.search(withdraw)
+    accept = unlinked((result.get("accept") or "").strip())
+    leaked = any(CREDENTIAL.search(text) for text in (reply, withdraw, accept))
     if leaked:
-        reply, withdraw = WITHHELD, ""
+        reply, withdraw, accept = WITHHELD, "", ""
     pr = os.environ["FORK_PR"]
     if asked["kind"] == "review":
         request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{asked['comment']}/replies",
@@ -726,11 +737,13 @@ def cmd_reply():
         quote = unlinked(asked.get("quote") or "")
         request("POST", f"/repos/{REPO}/issues/{pr}/comments",
                 {"body": f"> {quote}\n\n{reply}" if quote else reply})
-    if withdraw and asked.get("finding"):
+    note = (ACCEPTED_NOTE.format(asked.get("asker") or "the team", accept) if accept
+            else WITHDRAWN_NOTE.format(withdraw) if withdraw else "")
+    if note and asked.get("finding"):
         path = f"/repos/{REPO}/pulls/comments/{asked['finding']}"
         body = request("GET", path)["body"]
         if PRIOR_SEVERITY.match(body):
-            request("PATCH", path, {"body": WITHDRAWN_NOTE.format(withdraw) + body})
+            request("PATCH", path, {"body": note + body})
     if leaked:
         sys.exit(1)
 

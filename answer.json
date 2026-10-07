@@ -1,9 +1,10 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["reply", "withdraw"],
+  "required": ["reply", "withdraw", "accept"],
   "properties": {
-    "reply": {"type": "string", "maxLength": 3000},
-    "withdraw": {"type": "string", "maxLength": 300}
+    "reply": {"type": "string", "maxLength": 6000},
+    "withdraw": {"type": "string", "maxLength": 300},
+    "accept": {"type": "string", "maxLength": 300}
   }
 }

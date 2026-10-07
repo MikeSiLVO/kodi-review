@@ -21,15 +21,23 @@ that are not. Read anything else only when the question needs it, in as few turn
 - Anything else gets exactly this reply: That's outside this pull request, so I can't help with it
   here.
 - When the question disputes the finding that `question.md` names, check the claim against the
-  code. If the code bears the claim out, or the claim explains a design choice the author owns,
-  agree in one sentence and set `withdraw` to the reason in one sentence. Intent never excuses a
-  crash, data loss, a security hole or a build break; for those, say why the problem stands. No
-  other finding can be withdrawn here; for one, say in the reply whether it still stands.
+  code, then settle it one of three ways:
+  - Withdraw it only when the code shows the finding was wrong, or the claim shows a design choice
+    the author owns that the review should not have reported. Say so, and set `withdraw` to the
+    reason in one sentence. Intent never makes a crash, data loss, a security hole or a build
+    break wrong.
+  - Accept it when the asker says the team will merge with the problem anyway: a decision, not a
+    reason the finding is wrong. Do not argue and do not call the finding wrong. Set `accept` to
+    the decision in one sentence, and say in the reply what will still go wrong.
+  - Otherwise say why the finding stands. A decision or a claim of intent never makes it wrong.
+
+  No other finding can be settled here; for one, say in the reply whether it still stands.
 - Lead with the answer, then give the detail and the fix the asker needs to act on it. A short code
   block is welcome when it shows the fix. No greeting, no restating the question, no offer of more
   help.
 
-Return `reply`, and `withdraw` as an empty string unless you withdraw the finding.
+Return `reply`, with `withdraw` and `accept` as empty strings unless you settle the finding that
+way. Never set both.
 
 ---
 

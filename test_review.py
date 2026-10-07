@@ -298,7 +298,7 @@ class DiscussionTests(unittest.TestCase):
 
 
 class PriorTests(unittest.TestCase):
-    """Earlier findings: which stay open and which get marked fixed."""
+    """Earlier findings: which stay open, which are settled and which get marked fixed."""
 
     def thread(self, tid, logins, resolved=False, body="**Minor: Found**"):
         """Return a review thread shaped like the GraphQL reviewThreads nodes."""
@@ -309,17 +309,23 @@ class PriorTests(unittest.TestCase):
                      "author": {"login": login, "__typename": "Bot" if login in bots else "User"}}
                     for login in logins]}}
 
-    def test_open_findings(self):
-        """Only the bot's open findings without a reply from anyone else count."""
+    def test_earlier_findings(self):
+        """The bot's findings come back with their status, replies or not; other threads do not."""
         threads = [self.thread("T1", ["kodi-review"]),
                    self.thread("T2", ["kodi-review"], resolved=True),
                    self.thread("T3", ["kodi-review", "MikeSiLVO"]),
                    self.thread("T4", ["someone"]),
                    self.thread("T5", ["coderabbitai"]),
                    self.thread("T6", ["kodi-review"],
-                               body=review.FIXED_NOTE.format("a" * 12) + "**Minor: Found**")]
-        found = review.open_findings(threads)
-        self.assertEqual([f["id"] for f in found], ["T1"])
+                               body=review.FIXED_NOTE.format("a" * 12) + "**Minor: Found**"),
+                   self.thread("T7", ["kodi-review"],
+                               body=review.ACCEPTED_NOTE.format("dev", "Merging anyway.")
+                               + "**Minor: Found**\n\nDetail.")]
+        found = review.earlier_findings(threads)
+        self.assertEqual([(f["id"], f["status"]) for f in found],
+                         [("T1", "open"), ("T2", "resolved"), ("T3", "open"), ("T6", "fixed"),
+                          ("T7", "accepted")])
+        self.assertEqual({f["finding"] for f in found}, {"**Minor: Found**"})
         self.assertEqual(found[0]["comment"], 11)
 
     def test_post_marks_listed_only(self):
@@ -391,6 +397,30 @@ class RepeatTests(unittest.TestCase):
         self.assertIn("### Needs more work · 2 problems (1 Serious, 1 Moderate)", summary)
         self.assertIn("1 earlier finding still open.", summary)
 
+    def test_settled_spot_holds_without_counting(self):
+        """An accepted finding blocks a repeat at its spot, uncounted; a fixed one does neither."""
+        prior = [{"id": "T1", "path": "a.cpp", "line": 2, "status": "accepted",
+                  "finding": "**Moderate: Old**"},
+                 {"id": "T2", "path": "a.cpp", "line": 3, "status": "fixed",
+                  "finding": "**Moderate: Gone**"}]
+        repeat = {"path": "a.cpp", "line": 2, "severity": "Moderate", "title": "Again",
+                  "problem": "Same.", "fix": "Same."}
+        new = dict(repeat, line=3, title="New")
+        result = dict(RESULT, verdict="Needs more work", findings=[repeat, new])
+        files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=files), \
+                mock.patch.object(review, "load_prior", return_value=prior), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}):
+            review.cmd_post()
+        posted = request.call_args_list[0].args[2]["comments"]
+        self.assertEqual([c["line"] for c in posted], [3])
+        summary = request.call_args_list[1].args[2]["body"]
+        self.assertIn("· 1 problem (Moderate)", summary)
+        self.assertNotIn("still open", summary)
+
     def test_worse_finding_kept(self):
         """A new finding more severe than the open one at its spot is kept and posted."""
         prior = [{"id": "T1", "path": "a.cpp", "line": 2, "finding": "**Moderate: Old**"}]
@@ -453,7 +483,7 @@ class TrimTests(unittest.TestCase):
         thread = {"id": "T1", "isResolved": False, "path": "a.cpp", "line": 2,
                   "comments": {"nodes": [{"author": {"login": "kodi-review", "__typename": "Bot"},
                                           "body": "**Serious: Breaks**\n\nLong detail."}]}}
-        self.assertEqual(review.open_findings([thread])[0]["finding"], "**Serious: Breaks**")
+        self.assertEqual(review.earlier_findings([thread])[0]["finding"], "**Serious: Breaks**")
 
 
 class TriggerTests(unittest.TestCase):
@@ -560,20 +590,21 @@ class AnswerTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"COMMENT": "review/3", "FORK_PR": "7"}):
             review.cmd_question()
         saved = json.loads(Path(".kodi-review-run/question.json").read_text())
-        self.assertEqual(saved, {"kind": "review", "comment": 3, "finding": 1,
+        self.assertEqual(saved, {"kind": "review", "comment": 3, "finding": 1, "asker": "dev",
                                  "quote": "@kodi-review is this intended?"})
         text = Path(".kodi-review-run/question.md").read_text()
         self.assertIn("Its first comment is your finding", text)
         self.assertLess(text.index("**Minor: Leak**"), text.index("It is freed later."))
 
     def test_question_in_conversation_has_no_finding(self):
-        """A question in the main conversation can withdraw nothing."""
+        """A question in the main conversation can settle nothing."""
         asked = {"id": 9, "body": "@kodi-review summarize it", "user": {"login": "dev"}}
         with mock.patch.object(review, "request", return_value=asked), \
                 mock.patch.dict(os.environ, {"COMMENT": "issue/9", "FORK_PR": "7"}):
             review.cmd_question()
         self.assertIsNone(json.loads(Path(".kodi-review-run/question.json").read_text())["finding"])
-        self.assertIn("leave withdraw empty", Path(".kodi-review-run/question.md").read_text())
+        self.assertIn("leave withdraw and accept empty",
+                      Path(".kodi-review-run/question.md").read_text())
 
     def run_reply(self, asked, result):
         """Run the reply command for a saved question; return the requests and exit code."""
@@ -600,6 +631,15 @@ class AnswerTests(unittest.TestCase):
                                     {"body": "Agreed, @\u200bdev frees it."}))
         self.assertEqual(calls[-1], ("PATCH", f"/repos/{repo}/pulls/comments/1",
                                      {"body": "**Withdrawn:** Freed later.\n\n**Minor: Leak**"}))
+
+    def test_accepted_finding_names_the_asker(self):
+        """An accepted finding keeps its text under a note naming who accepted it."""
+        asked = {"kind": "review", "comment": 3, "finding": 1, "asker": "dev", "quote": "q"}
+        calls, _ = self.run_reply(asked, {"reply": "Recorded. The test still fails locally.",
+                                          "withdraw": "", "accept": "Merging with the failure."})
+        self.assertEqual(calls[-1], ("PATCH", f"/repos/{review.REPO}/pulls/comments/1",
+                                     {"body": "**Accepted by dev:** Merging with the failure."
+                                              "\n\n**Minor: Leak**"}))
 
     def test_conversation_reply_quotes_the_question(self):
         """An answer in the main conversation quotes the question, and withdraws nothing."""
