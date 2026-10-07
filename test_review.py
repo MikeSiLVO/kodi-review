@@ -494,7 +494,8 @@ class WithheldTests(unittest.TestCase):
 
     def test_patterns(self):
         """Anthropic keys, GitHub tokens and fine-grained PATs match; look-alikes do not."""
-        for text in ("sk-ant-api03-x", "gho_" + "A1" * 10, "github_pat_11ABC"):
+        for text in ("sk-ant-api03-x", "gho_" + "A1" * 10, "ghs_1234567_eyJhbGciOiJSUzI1NiJ9.e30.x",
+                     "github_pat_11ABC"):
             self.assertRegex(text, review.CREDENTIAL)
         for text in ("ghp_short", "sk-other", "github pat"):
             self.assertNotRegex(text, review.CREDENTIAL)
