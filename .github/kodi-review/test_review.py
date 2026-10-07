@@ -366,6 +366,25 @@ class RepeatTests(unittest.TestCase):
         self.assertIn("### Needs more work · 2 problems (1 Serious, 1 Moderate)", summary)
         self.assertIn("1 earlier finding still open.", summary)
 
+    def test_worse_finding_kept(self):
+        """A new finding more severe than the open one at its spot is kept and posted."""
+        prior = [{"id": "T1", "path": "a.cpp", "line": 2, "finding": "**Moderate: Old**"}]
+        worse = {"path": "a.cpp", "line": 2, "severity": "Serious", "title": "Crash",
+                 "problem": "Worse.", "fix": "Fix."}
+        result = dict(RESULT, verdict="Needs more work", findings=[worse])
+        files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=files), \
+                mock.patch.object(review, "load_prior", return_value=prior), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}):
+            review.cmd_post()
+        posted = request.call_args_list[0].args[2]["comments"]
+        self.assertEqual([c["line"] for c in posted], [2])
+        summary = request.call_args_list[1].args[2]["body"]
+        self.assertIn("2 problems (1 Serious, 1 Moderate)", summary)
+
 
 class UsageTests(unittest.TestCase):
     """The token report printed from the execution file."""

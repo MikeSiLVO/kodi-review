@@ -580,8 +580,10 @@ def cmd_post():
     listed = {f.get("id") for f in prior}
     fixed = [tid for tid in dict.fromkeys(result.get("fixed") or []) if tid in listed]
     spots = open_spots(prior, fixed)
-    result = dict(result, findings=[f for f in result["findings"]
-                                    if (f["path"], f["line"]) not in spots])
+    rank = SEVERITIES.index
+    result = dict(result, findings=[
+        f for f in result["findings"] if (f["path"], f["line"]) not in spots
+        or rank(f["severity"]) < rank(spots[(f["path"], f["line"])])])
     lines = {f["filename"]: attachable_lines(f.get("patch")) for f in changed_files()}
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
