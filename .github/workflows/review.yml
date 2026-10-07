@@ -60,7 +60,7 @@ jobs:
       contents: read
     steps:
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: bot
           persist-credentials: false
@@ -124,7 +124,7 @@ jobs:
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
 
       - name: Check out the pull request code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.UPSTREAM }}
           ref: ${{ steps.refs.outputs.head_sha }}
@@ -139,7 +139,7 @@ jobs:
             -o -name CLAUDE.local.md -o -name AGENTS.md \) -prune -exec rm -rf {} +
 
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: .kodi-review-bot
           persist-credentials: false
@@ -295,7 +295,7 @@ jobs:
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
     steps:
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: bot
           persist-credentials: false
