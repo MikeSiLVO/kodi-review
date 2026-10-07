@@ -4,8 +4,9 @@ A pull request reviewer for Kodi ([xbmc/xbmc](https://github.com/xbmc/xbmc)), ru
 Code on GitHub Actions. It reports only problems that should block a merge, proves each one from
 the code, and adds a status block.
 
-Reviews run from my xbmc fork for now and post to mirror pull requests there. This repo becomes the
-bot's home once a GitHub App can post its reviews on xbmc/xbmc.
+Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) GitHub App. To use it
+on a repo, install the App there with its two permissions: Pull requests (read and write) and
+Issues (read). Mentions only work in xbmc/xbmc and my test fork.
 
 ## How a review runs
 
