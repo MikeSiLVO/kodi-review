@@ -139,7 +139,7 @@ jobs:
       FORK_PR: ${{ needs.mirror.outputs.fork_pr }}
       HEAD_SHA: ${{ needs.mirror.outputs.head_sha }}
       BRANCH: ${{ needs.mirror.outputs.branch }}
-      BOT: .kodi-review-bot/.github/kodi-review
+      BOT: .kodi-review-bot
     steps:
       - name: Check out the pull request code
         uses: actions/checkout@v6
@@ -160,7 +160,6 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: .kodi-review-bot
-          sparse-checkout: .github/kodi-review
           persist-credentials: false
 
       - name: Prepare the review inputs
@@ -220,7 +219,7 @@ jobs:
             --model claude-opus-5-5
             --effort ${{ inputs.effort || 'high' }}
             --max-turns 60
-            --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
+            --append-system-prompt-file .kodi-review-bot/REVIEW.md
             --permission-mode dontAsk
             --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
