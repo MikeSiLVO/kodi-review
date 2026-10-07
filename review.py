@@ -785,9 +785,12 @@ def cmd_render():
 
 
 def usage_lines(messages):
-    """List each tool call with its result size, the calls per turn, then the token totals."""
-    calls, lines, per_turn = {}, [], {}
+    """List each call's result size, the calls per turn, the first turn's cache use, the totals."""
+    calls, lines, per_turn, first = {}, [], {}, None
     for m in messages:
+        usage = (m.get("message") or {}).get("usage")
+        if first is None and m.get("type") == "assistant" and usage:
+            first = usage
         content = (m.get("message") or {}).get("content")
         for part in content if isinstance(content, list) else []:
             if part.get("type") == "tool_use":
@@ -804,6 +807,9 @@ def usage_lines(messages):
                 lines.append(f"{size:>8} chars  {calls.get(part.get('tool_use_id'), '?')}")
     if per_turn:
         lines.append("calls per turn " + " ".join(str(n) for n in per_turn.values()))
+    if first:
+        lines.append(f"first turn cache wrote {first.get('cache_creation_input_tokens', 0)} "
+                     f"read {first.get('cache_read_input_tokens', 0)}")
     for m in messages:
         if m.get("type") == "result":
             lines.append(f"tokens {json.dumps(m.get('usage'))} turns {m.get('num_turns')} "

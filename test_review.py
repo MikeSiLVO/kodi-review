@@ -449,7 +449,8 @@ class UsageTests(unittest.TestCase):
     def test_usage_lines(self):
         """Each call shows its target and result size, never the result; turns count calls."""
         messages = [
-            {"type": "assistant", "message": {"id": "m1", "content": [
+            {"type": "assistant", "message": {"id": "m1", "usage": {
+                "cache_creation_input_tokens": 900, "cache_read_input_tokens": 8000}, "content": [
                 {"type": "tool_use", "id": "u1", "name": "Read",
                  "input": {"file_path": "a.cpp", "offset": 10, "limit": 50}}]}},
             {"type": "assistant", "message": {"id": "m1", "content": [
@@ -465,7 +466,8 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(lines[0], "      11 chars  Read a.cpp 10+50")
         self.assertTrue(lines[1].endswith("chars  Grep Foo"))
         self.assertEqual(lines[2], "calls per turn 2 1")
-        self.assertEqual(lines[3], 'tokens {"output_tokens": 5} turns 2 cost 0.1')
+        self.assertEqual(lines[3], "first turn cache wrote 900 read 8000")
+        self.assertEqual(lines[4], 'tokens {"output_tokens": 5} turns 2 cost 0.1')
         self.assertNotIn("secret", "\n".join(lines))
 
 
