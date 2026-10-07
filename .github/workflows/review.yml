@@ -274,7 +274,7 @@ jobs:
 
   post:
     needs: [trigger, review]
-    if: always() && needs.review.outputs.prepared == 'true'
+    if: ${{ !cancelled() && needs.review.outputs.prepared == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
