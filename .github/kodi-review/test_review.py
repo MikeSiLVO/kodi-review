@@ -322,6 +322,25 @@ class PriorTests(unittest.TestCase):
         self.assertIn("### Needs more work · 1 problem (Moderate)", body)
 
 
+class ResolveTests(unittest.TestCase):
+    """Resolving earlier findings when GitHub refuses."""
+
+    def test_refused_resolution_not_counted(self):
+        """A refused resolution is logged, the step goes on, and the footer claims none."""
+        result = dict(RESULT, fixed=["T1"])
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "changed_files", return_value=[]), \
+                mock.patch.object(review, "load_prior", return_value=[
+                    {"id": "T1", "finding": "**Minor: A**"}]), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.object(review, "graphql", side_effect=RuntimeError("forbidden")), \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": json.dumps(result)}), \
+                mock.patch("builtins.print"):
+            review.cmd_post()
+        self.assertNotIn("Resolved", request.call_args.args[2]["body"])
+
+
 class RepeatTests(unittest.TestCase):
     """New findings at a spot an earlier finding still holds."""
 

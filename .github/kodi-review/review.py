@@ -556,6 +556,18 @@ def upsert_summary(sha, text):
         request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments", {"body": body})
 
 
+def resolve_threads(ids):
+    """Resolve review threads, logging any that fail; return how many it resolved."""
+    resolved = 0
+    for tid in ids:
+        try:
+            graphql(RESOLVE_MUTATION, id=tid)
+            resolved += 1
+        except (urllib.error.URLError, RuntimeError, KeyError) as err:
+            print(f"Could not resolve {tid}: {err}")
+    return resolved
+
+
 def cmd_post():
     """Post new findings, resolve fixed earlier ones, or note a failure; exit 1 on a credential."""
     head = os.environ["HEAD_SHA"]
@@ -574,19 +586,21 @@ def cmd_post():
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
     still_open = [{"severity": severity} for severity in spots.values()]
-    summary = unlinked(summary_text(result, load_status(), head, loose, rerun, len(fixed),
-                                    still_open))
+    status = load_status()
+    summary = unlinked(summary_text(result, status, head, loose, rerun, len(fixed), still_open))
     for comment in inline:
         comment["body"] = unlinked(comment["body"])
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
         upsert_summary(reviewed_sha(), WITHHELD)
         sys.exit(1)
+    resolved = resolve_threads(fixed)
+    if resolved != len(fixed):
+        summary = unlinked(summary_text(result, status, head, loose, rerun, resolved,
+                                        still_open))
     if inline:
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})
     upsert_summary(head, summary)
-    for tid in fixed:
-        graphql(RESOLVE_MUTATION, id=tid)
 
 
 def cmd_render():
