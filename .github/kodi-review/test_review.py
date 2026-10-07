@@ -207,7 +207,7 @@ class FailedRunTests(unittest.TestCase):
 
 
 class UnlinkedTests(unittest.TestCase):
-    """Posted text that pings nobody and links no upstream pull request."""
+    """Posted text that pings nobody and links no pull request or issue."""
 
     def test_mention_outside_code(self):
         """A mention gets a zero-width space; code, emails and paths keep their @."""
@@ -215,11 +215,17 @@ class UnlinkedTests(unittest.TestCase):
                          "Ask @​fuzzard, not `@code`, a@b.com or x/@y")
 
     def test_upstream_links_and_refs(self):
-        """Upstream links and owner/repo references become upstream PR numbers."""
+        """Upstream links and owner/repo references become upstream PR and issue numbers."""
         text = ("See https://github.com/xbmc/xbmc/pull/29589/files, "
-                "github.com/xbmc/xbmc/issues/7#issuecomment-12. and xbmc/xbmc#29502.")
+                "github.com/XBMC/xbmc/issues/7#issuecomment-12. and xbmc/xbmc#29502.")
         self.assertEqual(review.unlinked(text),
-                         "See upstream PR 29589, upstream PR 7. and upstream PR 29502.")
+                         "See upstream PR 29589, upstream issue 7. and upstream PR 29502.")
+
+    def test_other_repo_refs(self):
+        """Links and references to any other repository are unlinked too, named in full."""
+        text = "Like xbmc/repo-scripts#12 and https://github.com/Foo/bar/issues/3."
+        self.assertEqual(review.unlinked(text),
+                         "Like xbmc/repo-scripts PR 12 and Foo/bar issue 3.")
 
     def test_bare_number(self):
         """A bare number of three or more digits becomes PR N; short ones and entities stay."""

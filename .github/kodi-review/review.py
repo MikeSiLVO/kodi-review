@@ -27,9 +27,9 @@ BUILD_NAMES = {"default": "Jenkins"}
 FAILED = {"failure", "error", "timed_out", "action_required", "startup_failure"}
 SEVERITIES = ("Serious", "Moderate", "Minor")
 CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
-UPSTREAM_LINK = re.compile(rf"(?:https?://)?(?:www\.)?github\.com/{re.escape(UPSTREAM)}/"
-                           r"(?:pull|issues)/(\d+)(?:/[\w/-]*)?(?:[?#][\w=&-]*)?")
-UPSTREAM_REF = re.compile(rf"\b{re.escape(UPSTREAM)}#(\d+)\b")
+REPO_LINK = re.compile(r"(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/(pull|issues)/"
+                       r"(\d+)(?:/[\w/-]*)?(?:[?#][\w=&-]*)?", re.I)
+REPO_REF = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
 BARE_REF = re.compile(r"(?<![\w&/])#(\d{3,})\b")
 MENTION = re.compile(r"(?<![\w/])@(?=[A-Za-z0-9])")
 CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_")
@@ -412,12 +412,19 @@ def load_status():
         return {}
 
 
+def repo_number(repo, kind, number):
+    """Name a pull request or issue in plain words, upstream ones without the repository."""
+    noun = "issue" if kind.lower() == "issues" else "PR"
+    where = "upstream" if repo.lower() == UPSTREAM.lower() else repo
+    return f"{where} {noun} {number}"
+
+
 def unlinked(text):
-    """Return a copy with @mentions, upstream links and PR numbers outside code unlinked."""
+    """Return a copy with @mentions, PR and issue links and PR numbers outside code unlinked."""
     parts = CODE.split(text)
     for i in range(0, len(parts), 2):
-        part = UPSTREAM_LINK.sub(r"upstream PR \1", parts[i])
-        part = UPSTREAM_REF.sub(r"upstream PR \1", part)
+        part = REPO_LINK.sub(lambda m: repo_number(m[1], m[2], m[3]), parts[i])
+        part = REPO_REF.sub(lambda m: repo_number(m[1], "pull", m[2]), part)
         part = BARE_REF.sub(r"PR \1", part)
         parts[i] = MENTION.sub("@​", part)
     return "".join(parts)
