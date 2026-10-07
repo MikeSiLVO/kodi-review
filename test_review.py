@@ -233,9 +233,11 @@ class UnlinkedTests(unittest.TestCase):
                          "Like xbmc/repo-scripts PR 12 and Foo/bar issue 3.")
 
     def test_bare_number(self):
-        """A bare number of three or more digits becomes PR N; short ones and entities stay."""
+        """A #N of 3+ digits becomes PR N, a PR prefix kept once; short ones and entities stay."""
         self.assertEqual(review.unlinked("Since #24720, not #12 or &#123;"),
                          "Since PR 24720, not #12 or &#123;")
+        self.assertEqual(review.unlinked("Like PR #24720 and pr #24721"),
+                         "Like PR 24720 and PR 24721")
 
     def test_code_block_kept(self):
         """A fenced block keeps its mentions and numbers."""

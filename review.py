@@ -31,7 +31,7 @@ CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
 REPO_LINK = re.compile(r"(?:https?://)?(?:www\.)?github\.com/([\w.-]+/[\w.-]+)/(pull|issues)/"
                        r"(\d+)(?:/[\w/-]*)?(?:[?#][\w=&-]*)?", re.I)
 REPO_REF = re.compile(r"\b([\w.-]+/[\w.-]+)#(\d+)\b")
-BARE_REF = re.compile(r"(?<![\w&/])#(\d{3,})\b")
+BARE_REF = re.compile(r"(?:\bPR ?)?(?<![\w&/])#(\d{3,})\b", re.I)
 MENTION = re.compile(r"(?<![\w/])@(?=[A-Za-z0-9])")
 CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_")
 WITHHELD = ("Withheld: the review output contained something that looks like a credential. "
