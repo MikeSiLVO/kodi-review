@@ -655,11 +655,21 @@ def asking_comment():
     return asker.groups()
 
 
+def fetch_comment(path):
+    """Fetch the asking comment; exit 1 when it has been deleted."""
+    try:
+        return request("GET", path)
+    except urllib.error.HTTPError as err:
+        if err.code != 404:
+            raise
+        sys.exit("The comment that asked for this run has been deleted.")
+
+
 def cmd_trigger():
     """Exit 1 unless a writer's comment here asks the bot for this run's mode; react to it."""
     kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
-    comment = request("GET", path)
+    comment = fetch_comment(path)
     body = spoken(comment.get("body") or "")
     mention = BOT_MENTION.search(body)
     pr_url = comment.get("issue_url") or comment.get("pull_request_url") or ""
@@ -693,10 +703,10 @@ def cmd_question():
     pr = os.environ["FORK_PR"]
     thread, finding = [], None
     if kind == "issue":
-        asked = request("GET", f"/repos/{REPO}/issues/comments/{number}")
+        asked = fetch_comment(f"/repos/{REPO}/issues/comments/{number}")
         where = "Asked in the main conversation, so leave withdraw and accept empty."
     else:
-        asked = request("GET", f"/repos/{REPO}/pulls/comments/{number}")
+        asked = fetch_comment(f"/repos/{REPO}/pulls/comments/{number}")
         top = asked.get("in_reply_to_id") or asked["id"]
         thread = sorted((c for c in paged(f"/repos/{REPO}/pulls/{pr}/comments")
                          if top in (c["id"], c.get("in_reply_to_id"))),

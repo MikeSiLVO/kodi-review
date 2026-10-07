@@ -500,6 +500,9 @@ class TriggerTests(unittest.TestCase):
         def reply(method, path, body=None, raw=False):
             """Reply like GitHub for the comment and the commenter's access."""
             calls.append((method, path))
+            if comment is None:
+                refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
+                raise refusals[-1]
             if path.endswith("/permission"):
                 if access is None:
                     refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
@@ -565,6 +568,12 @@ class TriggerTests(unittest.TestCase):
             calls, code = self.run_trigger(comment, access, asker)
             self.assertTrue(code, (access, asker))
             self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_deleted_comment(self):
+        """A deleted comment ends the run with a message, not a traceback."""
+        calls, code = self.run_trigger(None)
+        self.assertEqual(code, "The comment that asked for this run has been deleted.")
+        self.assertEqual(calls, [("GET", f"/repos/{review.REPO}/issues/comments/5")])
 
 
 class AnswerTests(unittest.TestCase):
