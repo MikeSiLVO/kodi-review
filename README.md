@@ -11,7 +11,8 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
 ## How a review runs
 
 1. Someone with write access to the repo comments `@kodi-review review`, or the mention alone, on
-   an open pull request. The comment gets a 👀 reaction and the review starts.
+   an open pull request. The comment gets a 👀 reaction and the review starts. A mention inside
+   code, a quote or an HTML comment does not count.
 
    `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the
    repository (xbmc/xbmc by default), the effort level (high by default), a dry run that writes

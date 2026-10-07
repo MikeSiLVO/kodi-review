@@ -550,8 +550,11 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual(calls[0], ("GET", f"/repos/{review.REPO}/pulls/comments/6"))
 
     def test_refused(self):
-        """No mention, another pull request, read access, no access or a bad id are refused."""
+        """No mention, a quoted or code one, another PR, low access or a bad id are refused."""
         cases = [(self.comment(body="thanks @kodi-reviewer"), "write", "issue/5"),
+                 (self.comment(body="> @kodi-review review\n\nAgreed."), "write", "issue/5"),
+                 (self.comment(body="Type `@kodi-review review`."), "write", "issue/5"),
+                 (self.comment(body="```\n@kodi-review\n```"), "write", "issue/5"),
                  (self.comment(url="https://api.github.com/repos/o/r/issues/17"), "write",
                   "issue/5"),
                  (self.comment(), "read", "issue/5"),

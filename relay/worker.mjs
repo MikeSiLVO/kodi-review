@@ -1,5 +1,11 @@
 const MENTION = /(?<![\w-])@kodi-review(?![\w-])/i;
 const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
+const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
+
+/** Return a comment's own words, without code, quoted lines or HTML comments. */
+export function spoken(body) {
+  return body.replace(QUOTED, " ");
+}
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
 
 /** Verify GitHub's HMAC signature of the raw request body. */
@@ -17,13 +23,14 @@ export async function verify(secret, body, signature) {
 export function trigger(event, payload, allowed) {
   if (payload.action !== "created" || !allowed.includes(payload.repository?.full_name)) return null;
   const comment = payload.comment;
+  const words = spoken(comment?.body || "");
   if (!comment || comment.user?.type === "Bot" || STRANGERS.has(comment.author_association)
-      || !MENTION.test(comment.body || "")) return null;
+      || !MENTION.test(words)) return null;
   const pr = event === "issue_comment" && payload.issue?.pull_request ? payload.issue
     : event === "pull_request_review_comment" ? payload.pull_request : null;
   if (!pr || pr.state !== "open") return null;
   const kind = event === "issue_comment" ? "issue" : "review";
-  const after = comment.body.slice(MENTION.exec(comment.body).index + "@kodi-review".length);
+  const after = words.slice(MENTION.exec(words).index + "@kodi-review".length);
   return { pr: String(pr.number), repo: payload.repository.full_name,
     comment: `${kind}/${comment.id}`, mode: REVIEW_ASK.test(after) ? "review" : "answer" };
 }

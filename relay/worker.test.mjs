@@ -28,7 +28,8 @@ test("a mention on an open pull request asks for a review", () => {
 test("review or nothing after the mention asks for a review; other words ask a question", () => {
   const base = issueComment();
   const modes = [["@kodi-review", "review"], ["@kodi-review, Review again", "review"],
-    ["@kodi-review reviewing this, why?", "answer"], ["Hey @kodi-review is it safe?", "answer"]];
+    ["@kodi-review reviewing this, why?", "answer"], ["Hey @kodi-review is it safe?", "answer"],
+    ["> @kodi-review review\n\n@kodi-review why?", "answer"]];
   for (const [body, mode] of modes) {
     const payload = issueComment({ comment: { ...base.comment, body } });
     assert.equal(trigger("issue_comment", payload, REPOS).mode, mode, body);
@@ -53,6 +54,10 @@ test("everything else is ignored", () => {
     issueComment({ issue: { ...base.issue, state: "closed" } }),
     issueComment({ comment: { ...base.comment, body: "thanks @kodi-reviewer" } }),
     issueComment({ comment: { ...base.comment, body: "ask @kodi-review-bot" } }),
+    issueComment({ comment: { ...base.comment, body: "> @kodi-review review\n\nThanks" } }),
+    issueComment({ comment: { ...base.comment, body: "Type `@kodi-review review` to ask" } }),
+    issueComment({ comment: { ...base.comment, body: "```\n@kodi-review\n```" } }),
+    issueComment({ comment: { ...base.comment, body: "<!-- @kodi-review -->" } }),
     issueComment({ comment: { ...base.comment, author_association: "NONE" } }),
     issueComment({ comment: { ...base.comment, user: { type: "Bot" } } }),
   ];

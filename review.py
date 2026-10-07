@@ -61,6 +61,7 @@ PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.
              "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
+QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
 ASKER = re.compile(r"(issue|review)/(\d+)")
 CAN_ASK = ("admin", "write")
 
@@ -641,6 +642,11 @@ def cmd_post():
     upsert_summary(head, summary)
 
 
+def spoken(body):
+    """Return a comment's own words, without code, quoted lines or HTML comments."""
+    return QUOTED.sub(" ", body)
+
+
 def asking_comment():
     """Return the kind and id of the comment that started this run; exit 1 on a malformed one."""
     asker = ASKER.fullmatch(os.environ.get("COMMENT", ""))
@@ -654,7 +660,7 @@ def cmd_trigger():
     kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
     comment = request("GET", path)
-    body = comment.get("body") or ""
+    body = spoken(comment.get("body") or "")
     mention = BOT_MENTION.search(body)
     pr_url = comment.get("issue_url") or comment.get("pull_request_url") or ""
     if not mention or not pr_url.endswith(f"/{os.environ['FORK_PR']}"):
