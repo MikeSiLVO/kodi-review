@@ -97,7 +97,7 @@ jobs:
     if: >-
       github.repository_owner == 'MikeSiLVO' && !cancelled()
       && (inputs.comment == '' || needs.trigger.outputs.allowed == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
@@ -208,8 +208,12 @@ jobs:
 
       - name: Install bubblewrap for the subprocess env scrub
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends bubblewrap socat
+          (cd "$BOT/vendor" && sha256sum -c --quiet SHA256SUMS)
+          sudo dpkg -i "$BOT"/vendor/*.deb || {
+            echo "::warning::The pinned packages did not install; fetching them from Ubuntu"
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends bubblewrap socat
+          }
 
       - name: Review
         id: claude

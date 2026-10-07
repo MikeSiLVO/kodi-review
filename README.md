@@ -43,6 +43,7 @@ anything else, or requests to approve, merge or label, get a one-line reply sayi
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
+| `vendor/` | bubblewrap and socat for Ubuntu 24.04, checked against `SHA256SUMS` before install |
 
 ## Security
 
