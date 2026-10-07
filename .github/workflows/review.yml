@@ -238,6 +238,7 @@ jobs:
             --max-turns ${{ env.MODE == 'answer' && 20 || 60 }}
             --append-system-prompt-file ${{ runner.temp }}/instructions.md
             --permission-mode dontAsk
+            --exclude-dynamic-system-prompt-sections
             --tools "Read,Grep,Glob"
             --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
