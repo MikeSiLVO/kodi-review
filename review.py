@@ -687,7 +687,8 @@ def cmd_question():
         if ((first.get("user") or {}).get("type") == "Bot" and first.get("id") != asked["id"]
                 and PRIOR_SEVERITY.match(first.get("body") or "")):
             finding = first["id"]
-        where = (f"Asked in the thread on {asked.get('path')}, line {asked.get('line')}. "
+        line = asked.get("line") or asked.get("original_line")
+        where = (f"Asked in the thread on {asked.get('path')}, line {line}. "
                  + ("Its first comment is your finding; withdraw only that one."
                     if finding else "No finding of yours is open there, so leave withdraw empty.")
                  + f"\n\nThe thread, oldest first:\n\n{thread_text(thread)}")
