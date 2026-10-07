@@ -230,7 +230,7 @@ jobs:
         if: ${{ !inputs.dry_run && inputs.sha == '' }}
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.KODI_REVIEW_APP_ID }}
+          client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
           owner: ${{ steps.target.outputs.owner }}
           repositories: ${{ steps.target.outputs.name }}
