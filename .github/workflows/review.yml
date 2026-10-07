@@ -50,6 +50,7 @@ env:
   REPLAY_SHA: ${{ inputs.sha }}
   COMMENT: ${{ inputs.comment }}
   MODE: ${{ inputs.mode || 'review' }}
+  ALLOWED_REPOS: xbmc/xbmc MikeSiLVO/xbmc
 
 jobs:
   trigger:
@@ -68,8 +69,8 @@ jobs:
       - name: Split the repository name
         id: target
         run: |
-          [[ "$UPSTREAM" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
-            || { echo "Not a repo: $UPSTREAM"; exit 1; }
+          [[ " $ALLOWED_REPOS " == *" $UPSTREAM "* ]] \
+            || { echo "Not an allowed repo: $UPSTREAM"; exit 1; }
           echo "owner=${UPSTREAM%%/*}" >> "$GITHUB_OUTPUT"
           echo "name=${UPSTREAM#*/}" >> "$GITHUB_OUTPUT"
 
@@ -107,8 +108,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$UPSTREAM_PR" =~ ^[0-9]+$ ]] || { echo "Not a PR number: $UPSTREAM_PR"; exit 1; }
-          [[ "$UPSTREAM" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
-            || { echo "Not a repo: $UPSTREAM"; exit 1; }
+          [[ " $ALLOWED_REPOS " == *" $UPSTREAM "* ]] \
+            || { echo "Not an allowed repo: $UPSTREAM"; exit 1; }
           meta=$(gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR")
           [[ "$(jq -r .state <<<"$meta")" == open ]] \
             || { echo "PR $UPSTREAM_PR is not open; nothing to review."; exit 1; }
