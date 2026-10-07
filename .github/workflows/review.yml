@@ -209,8 +209,9 @@ jobs:
       - name: Install bubblewrap for the subprocess env scrub
         run: |
           (cd "$BOT/vendor" && sha256sum -c --quiet SHA256SUMS)
-          sudo dpkg -i "$BOT"/vendor/*.deb || {
-            echo "::warning::The pinned packages did not install; fetching them from Ubuntu"
+          for deb in "$BOT"/vendor/*.deb; do sudo dpkg-deb -x "$deb" /; done
+          bwrap --version && socat -V > /dev/null || {
+            echo "::warning::The pinned packages did not run; fetching them from Ubuntu"
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends bubblewrap socat
           }
