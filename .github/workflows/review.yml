@@ -158,6 +158,7 @@ jobs:
             --max-turns 60
             --append-system-prompt-file .kodi-review-bot/REVIEW.md
             --permission-mode dontAsk
+            --tools "Read,Grep,Glob"
             --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
             --disallowedTools "Read(//proc/**)" "Read(//sys/**)" "Read(~/.claude/**)"
