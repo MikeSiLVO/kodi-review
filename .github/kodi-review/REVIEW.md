@@ -79,8 +79,9 @@ survives.
   non-empty (CGUIInfoLabel::CInfoPortion::Get). An empty value leaves no stray separator.
 - CI builds every platform. Do not claim code will not compile unless you can show the exact
   error.
-- Do not flag schema/version.txt differences the PR itself did not make (stacked or rebased
-  branches).
+- A version.txt change in `full.diff` is the PR's own, since the diff is against the merge base.
+  A lower version than the base is a bug. Only a difference the diff does not show comes from a
+  stacked or rebased branch; do not flag that.
 
 ## Kodi checks worth making
 
