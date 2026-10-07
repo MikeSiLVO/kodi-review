@@ -31,9 +31,15 @@ on:
         description: "Comment that asked for the review, as issue/ID or review/ID"
         required: false
         type: string
+      mode:
+        description: "Set by the relay: answer runs each get their own queue, reviews share one"
+        required: false
+        type: string
 
 concurrency:
-  group: kodi-review-${{ inputs.repo }}-${{ inputs.pr }}
+  group: >-
+    kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.mode == 'answer' && inputs.comment
+    || 'review' }}
   cancel-in-progress: false
 
 env:

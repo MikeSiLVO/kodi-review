@@ -22,7 +22,17 @@ function sign(body, secret = ENV.WEBHOOK_SECRET) {
 
 test("a mention on an open pull request asks for a review", () => {
   assert.deepEqual(trigger("issue_comment", issueComment(), REPOS),
-    { pr: "7", repo: "xbmc/xbmc", comment: "issue/99" });
+    { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review" });
+});
+
+test("review or nothing after the mention asks for a review; other words ask a question", () => {
+  const base = issueComment();
+  const modes = [["@kodi-review", "review"], ["@kodi-review, Review again", "review"],
+    ["@kodi-review reviewing this, why?", "answer"], ["Hey @kodi-review is it safe?", "answer"]];
+  for (const [body, mode] of modes) {
+    const payload = issueComment({ comment: { ...base.comment, body } });
+    assert.equal(trigger("issue_comment", payload, REPOS).mode, mode, body);
+  }
 });
 
 test("a mention in a line comment names the review comment", () => {
@@ -31,7 +41,7 @@ test("a mention in a line comment names the review comment", () => {
     comment: { id: 5, body: "@kodi-review why?", author_association: "MEMBER",
       user: { type: "User" } } };
   assert.deepEqual(trigger("pull_request_review_comment", payload, REPOS),
-    { pr: "8", repo: "xbmc/xbmc", comment: "review/5" });
+    { pr: "8", repo: "xbmc/xbmc", comment: "review/5", mode: "answer" });
 });
 
 test("everything else is ignored", () => {
@@ -72,7 +82,7 @@ test("a signed mention dispatches the review workflow", async (t) => {
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /MikeSiLVO\/kodi-review\/actions\/workflows\/review\.yml/);
   assert.deepEqual(JSON.parse(calls[0].init.body),
-    { ref: "main", inputs: { pr: "7", repo: "xbmc/xbmc", comment: "issue/99" } });
+    { ref: "main", inputs: { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review" } });
 });
 
 test("an unsigned request is refused without dispatching", async (t) => {

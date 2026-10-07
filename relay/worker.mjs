@@ -1,4 +1,5 @@
 const MENTION = /(?<![\w-])@kodi-review(?![\w-])/i;
+const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
 
 /** Verify GitHub's HMAC signature of the raw request body. */
@@ -22,8 +23,9 @@ export function trigger(event, payload, allowed) {
     : event === "pull_request_review_comment" ? payload.pull_request : null;
   if (!pr || pr.state !== "open") return null;
   const kind = event === "issue_comment" ? "issue" : "review";
+  const after = comment.body.slice(MENTION.exec(comment.body).index + "@kodi-review".length);
   return { pr: String(pr.number), repo: payload.repository.full_name,
-    comment: `${kind}/${comment.id}` };
+    comment: `${kind}/${comment.id}`, mode: REVIEW_ASK.test(after) ? "review" : "answer" };
 }
 
 export default {
