@@ -42,6 +42,7 @@ env:
   UPSTREAM_PR: ${{ inputs.pr }}
   FORK_PR: ${{ inputs.pr }}
   REPLAY_SHA: ${{ inputs.sha }}
+  COMMENT: ${{ inputs.comment }}
 
 jobs:
   trigger:
@@ -52,6 +53,7 @@ jobs:
       contents: read
     outputs:
       allowed: ${{ steps.check.outcome == 'success' }}
+      mode: ${{ steps.check.outputs.mode }}
     steps:
       - name: Check out the review bot
         uses: actions/checkout@v6
@@ -77,12 +79,11 @@ jobs:
           repositories: ${{ steps.target.outputs.name }}
           permission-pull-requests: write
 
-      - name: Check the comment that asked for the review
+      - name: Check the comment that asked for the bot
         id: check
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          COMMENT: ${{ inputs.comment }}
         run: python3 bot/review.py trigger
 
   review:
@@ -100,6 +101,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       BOT: .kodi-review-bot
+      MODE: ${{ needs.trigger.outputs.mode || 'review' }}
     steps:
       - name: Find the commits to review
         id: refs
@@ -152,6 +154,7 @@ jobs:
           set -euo pipefail
           mkdir -p .kodi-review-run
           python3 "$BOT/review.py" pr
+          if [ "$MODE" = answer ]; then python3 "$BOT/review.py" question; fi
           if [ -z "$REPLAY_SHA" ]; then
             python3 "$BOT/review.py" status || echo "Status unavailable"
             original=$(jq -r '.backport.original // empty' .kodi-review-run/status.json || true)
@@ -179,7 +182,15 @@ jobs:
               "repos/$UPSTREAM/contents/$rules?ref=$BASE_SHA" > "$out" || rm -f "$out"
           done
           python3 "$BOT/review.py" piers
-          echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
+          if [ "$MODE" = answer ]; then
+            cat "$BOT/ANSWER.md" "$BOT/REVIEW.md" > "$RUNNER_TEMP/instructions.md"
+            echo "schema=$(jq -c . "$BOT/answer.json")" >> "$GITHUB_OUTPUT"
+            echo "task=Answer the question in question.md about" >> "$GITHUB_OUTPUT"
+          else
+            cp "$BOT/REVIEW.md" "$RUNNER_TEMP/instructions.md"
+            echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
+            echo "task=Review" >> "$GITHUB_OUTPUT"
+          fi
           echo "files=$(cd .kodi-review-run && ls -dp -- * | paste -sd' ')" >> "$GITHUB_OUTPUT"
           echo "prepared=true" >> "$GITHUB_OUTPUT"
 
@@ -198,15 +209,16 @@ jobs:
           github_token: ${{ github.token }}
           settings: '{"permissions": {"blockReadsOutsideWorkingDirectories": true}}'
           prompt: |
-            Review pull request ${{ inputs.pr }} in ${{ env.UPSTREAM }}. Follow the review
-            instructions in your system prompt. The prepared files in .kodi-review-run are:
-            ${{ steps.prep.outputs.files }}. Read the ones your instructions name in your first
-            turn, then return the result in the required structured format.
+            ${{ steps.prep.outputs.task }} pull request ${{ inputs.pr }} in ${{ env.UPSTREAM }}.
+            Follow the instructions in your system prompt. The prepared files in
+            .kodi-review-run are: ${{ steps.prep.outputs.files }}. Read the ones your
+            instructions name in your first turn, then return the result in the required
+            structured format.
           claude_args: |
             --model claude-opus-5-5
             --effort ${{ inputs.effort || 'high' }}
-            --max-turns 60
-            --append-system-prompt-file .kodi-review-bot/REVIEW.md
+            --max-turns ${{ env.MODE == 'answer' && 20 || 60 }}
+            --append-system-prompt-file ${{ runner.temp }}/instructions.md
             --permission-mode dontAsk
             --tools "Read,Grep,Glob"
             --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
@@ -240,9 +252,10 @@ jobs:
             .kodi-review-run/status.json
             .kodi-review-run/prior.json
             .kodi-review-run/new.diff
+            .kodi-review-run/question.json
 
   post:
-    needs: review
+    needs: [trigger, review]
     if: always() && needs.review.outputs.prepared == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -250,6 +263,7 @@ jobs:
       contents: read
     env:
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
+      MODE: ${{ needs.trigger.outputs.mode || 'review' }}
     steps:
       - name: Check out the review bot
         uses: actions/checkout@v6
@@ -264,7 +278,7 @@ jobs:
           path: .kodi-review-run
 
       - name: Write the review to the run summary
-        if: inputs.dry_run || inputs.sha != ''
+        if: env.MODE == 'review' && (inputs.dry_run || inputs.sha != '')
         run: |
           python3 bot/review.py render .kodi-review-run/status.json .kodi-review-run/result.json \
             >> "$GITHUB_STEP_SUMMARY"
@@ -287,9 +301,10 @@ jobs:
           repositories: ${{ steps.target.outputs.name }}
           permission-pull-requests: write
 
-      - name: Post the review
+      - name: Post the review or the answer
         if: ${{ !inputs.dry_run && inputs.sha == '' }}
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py post
+          RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py \
+            "$([ "$MODE" = answer ] && echo reply || echo post)"

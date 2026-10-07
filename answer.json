@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "withdraw"],
+  "properties": {
+    "reply": {"type": "string", "maxLength": 3000},
+    "withdraw": {"type": "string", "maxLength": 300}
+  }
+}

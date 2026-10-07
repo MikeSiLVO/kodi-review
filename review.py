@@ -48,6 +48,10 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
         comments(first: 20) { nodes { databaseId author { login __typename } body } } }
 }}}}"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
+WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
+NO_ANSWER = "I could not finish an answer. Ask again."
+REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
+QUOTE_LIMIT = 4000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 ASKER = re.compile(r"(issue|review)/(\d+)")
 CAN_ASK = ("admin", "write")
@@ -624,29 +628,106 @@ def cmd_post():
     upsert_summary(head, summary)
 
 
-def cmd_trigger():
-    """Exit 1 unless a writer's comment on this pull request mentions the bot; react to it."""
+def asking_comment():
+    """Return the kind and id of the comment that started this run; exit 1 on a malformed one."""
     asker = ASKER.fullmatch(os.environ.get("COMMENT", ""))
     if not asker:
         sys.exit(f"Not a comment: {os.environ.get('COMMENT')}")
-    kind, number = asker.groups()
+    return asker.groups()
+
+
+def cmd_trigger():
+    """Exit 1 unless a writer's comment here mentions the bot; react and record review or answer."""
+    kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
     comment = request("GET", path)
+    body = comment.get("body") or ""
+    mention = BOT_MENTION.search(body)
     pr_url = comment.get("issue_url") or comment.get("pull_request_url") or ""
-    if (not BOT_MENTION.search(comment.get("body") or "")
-            or not pr_url.endswith(f"/{os.environ['FORK_PR']}")):
-        sys.exit("The comment does not ask for a review of this pull request.")
+    if not mention or not pr_url.endswith(f"/{os.environ['FORK_PR']}"):
+        sys.exit("The comment does not ask the bot anything on this pull request.")
     login = (comment.get("user") or {}).get("login", "")
     try:
         access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
     except urllib.error.HTTPError:
         access = "none"
     if access not in CAN_ASK:
-        sys.exit(f"{login} has {access} access; asking for a review needs write access.")
+        sys.exit(f"{login} has {access} access; asking the bot needs write access.")
     try:
         request("POST", f"{path}/reactions", {"content": "eyes"})
     except urllib.error.URLError as err:
         print(f"Could not react: {err}")
+    mode = "review" if REVIEW_ASK.match(body, mention.end()) else "answer"
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"mode={mode}\n")
+
+
+def thread_text(comments):
+    """Format review comments in the order given, each under its author, cut at the quote limit."""
+    return "\n\n".join(f"{(c.get('user') or {}).get('login', 'ghost')}:\n"
+                       f"{(c.get('body') or '').strip()[:QUOTE_LIMIT]}" for c in comments)
+
+
+def cmd_question():
+    """Write the asking comment and thread to question.md, its ids and quote to question.json."""
+    kind, number = asking_comment()
+    pr = os.environ["FORK_PR"]
+    thread, finding = [], None
+    if kind == "issue":
+        asked = request("GET", f"/repos/{REPO}/issues/comments/{number}")
+        where = "Asked in the main conversation, so leave withdraw empty."
+    else:
+        asked = request("GET", f"/repos/{REPO}/pulls/comments/{number}")
+        top = asked.get("in_reply_to_id") or asked["id"]
+        thread = sorted((c for c in paged(f"/repos/{REPO}/pulls/{pr}/comments")
+                         if top in (c["id"], c.get("in_reply_to_id"))),
+                        key=lambda c: c["created_at"])
+        first = thread[0] if thread else {}
+        if ((first.get("user") or {}).get("type") == "Bot" and first.get("id") != asked["id"]
+                and PRIOR_SEVERITY.match(first.get("body") or "")):
+            finding = first["id"]
+        where = (f"Asked in the thread on {asked.get('path')}, line {asked.get('line')}. "
+                 + ("Its first comment is your finding; withdraw only that one."
+                    if finding else "No finding of yours is open there, so leave withdraw empty.")
+                 + f"\n\nThe thread, oldest first:\n\n{thread_text(thread)}")
+    login = (asked.get("user") or {}).get("login", "ghost")
+    question = (asked.get("body") or "").strip()[:QUOTE_LIMIT]
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "question.md").write_text(f"Question from {login}:\n\n{question}\n\n{where}\n")
+    (RUN_DIR / "question.json").write_text(json.dumps(
+        {"kind": kind, "comment": int(number), "finding": finding,
+         "quote": question.split("\n", 1)[0][:300]}) + "\n")
+
+
+def cmd_reply():
+    """Reply to the asker, withdraw a conceded finding; withhold a leaked credential and exit 1."""
+    asked = json.loads((RUN_DIR / "question.json").read_text())
+    try:
+        result = json.loads(os.environ.get("RESULT") or "null")
+    except json.JSONDecodeError:
+        result = None
+    result = result if isinstance(result, dict) else {}
+    reply = unlinked((result.get("reply") or "").strip()) or NO_ANSWER
+    withdraw = unlinked((result.get("withdraw") or "").strip())
+    leaked = CREDENTIAL.search(reply) or CREDENTIAL.search(withdraw)
+    if leaked:
+        reply, withdraw = WITHHELD, ""
+    pr = os.environ["FORK_PR"]
+    if asked["kind"] == "review":
+        request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{asked['comment']}/replies",
+                {"body": reply})
+    else:
+        quote = unlinked(asked.get("quote") or "")
+        request("POST", f"/repos/{REPO}/issues/{pr}/comments",
+                {"body": f"> {quote}\n\n{reply}" if quote else reply})
+    if withdraw and asked.get("finding"):
+        path = f"/repos/{REPO}/pulls/comments/{asked['finding']}"
+        body = request("GET", path)["body"]
+        if PRIOR_SEVERITY.match(body):
+            request("PATCH", path, {"body": WITHDRAWN_NOTE.format(withdraw) + body})
+    if leaked:
+        sys.exit(1)
 
 
 def cmd_render():
@@ -695,7 +776,8 @@ def cmd_usage():
 COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers,
             "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
-            "trigger": cmd_trigger, "usage": cmd_usage}
+            "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
+            "usage": cmd_usage}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()
