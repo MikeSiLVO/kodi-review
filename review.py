@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-REPO = os.environ.get("GITHUB_REPOSITORY", "")
+REPO = os.environ.get("REVIEW_REPO") or os.environ.get("GITHUB_REPOSITORY", "")
 UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
@@ -35,7 +35,6 @@ MENTION = re.compile(r"(?<![\w/])@(?=[A-Za-z0-9])")
 CREDENTIAL = re.compile(r"sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_")
 WITHHELD = ("Withheld: the review output contained something that looks like a credential. "
             "Check the run.")
-BOT_LOGIN = "github-actions"
 PRIOR_SEVERITY = re.compile(r"^\*\*(Serious|Moderate|Minor)\b")
 RABBIT = r"auto-generated comment: release notes by coderabbit\.ai -->"
 RABBIT_NOTES = re.compile(rf"<!-- This is an {RABBIT}.*?<!-- end of {RABBIT}", re.S)
@@ -45,7 +44,8 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } }
+      nodes { id isResolved path line
+        comments(first: 20) { nodes { author { login __typename } body } } }
 }}}}"""
 RESOLVE_MUTATION = """mutation($id: ID!) {
   resolveReviewThread(input: {threadId: $id}) { thread { isResolved } }
@@ -88,7 +88,10 @@ def summary_comment():
 
 
 def changed_files():
-    """Return the mirrored pull request's files with their patches."""
+    """Return the reviewed change's files with their patches, a blind replay's from its commits."""
+    if os.environ.get("REPLAY_SHA"):
+        span = f"{os.environ['BASE_SHA']}...{os.environ['HEAD_SHA']}"
+        return request("GET", f"/repos/{UPSTREAM}/compare/{span}")["files"]
     return list(paged(f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/files"))
 
 
@@ -362,11 +365,17 @@ def graphql(query, **variables):
 
 def open_findings(threads):
     """Return the bot's unresolved threads that nobody else replied to, as earlier findings."""
-    return [{"id": t["id"], "path": t["path"], "line": t["line"],
-             "finding": t["comments"]["nodes"][0]["body"].split("\n", 1)[0][:160]}
-            for t in threads if not t["isResolved"] and t["comments"]["nodes"]
-            and all((c["author"] or {}).get("login") == BOT_LOGIN
-                    for c in t["comments"]["nodes"])]
+    found = []
+    for t in threads:
+        comments = t["comments"]["nodes"]
+        first = (comments[0]["author"] or {}) if comments else {}
+        if (t["isResolved"] or first.get("__typename") != "Bot"
+                or not PRIOR_SEVERITY.match(comments[0]["body"])
+                or any((c["author"] or {}).get("login") != first.get("login") for c in comments)):
+            continue
+        found.append({"id": t["id"], "path": t["path"], "line": t["line"],
+                      "finding": comments[0]["body"].split("\n", 1)[0][:160]})
+    return found
 
 
 def cmd_prior():
@@ -613,9 +622,16 @@ def cmd_post():
 
 
 def cmd_render():
-    """Render the summary comment a status.json and a result.json give, without posting."""
-    status = json.loads(Path(sys.argv[2]).read_text())
-    result = json.loads(Path(sys.argv[3]).read_text())
+    """Render a result's summary comment without posting, or note the review did not finish."""
+    status_file, result_file = Path(sys.argv[2]), Path(sys.argv[3])
+    status = json.loads(status_file.read_text()) if status_file.exists() else {}
+    try:
+        result = json.loads(result_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        result = None
+    if not isinstance(result, dict) or any(key not in result for key in REQUIRED):
+        print("The review did not finish.")
+        return
     _, loose = place_findings(result["findings"], {})
     print(unlinked(summary_text(result, status, status.get("head", ""), loose, False)))
 

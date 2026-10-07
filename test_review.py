@@ -2,7 +2,10 @@
 
 import json
 import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import review
@@ -297,16 +300,20 @@ class PriorTests(unittest.TestCase):
 
     def thread(self, tid, logins, resolved=False):
         """Return a review thread shaped like the GraphQL reviewThreads nodes."""
+        bots = {"kodi-review", "coderabbitai"}
         return {"id": tid, "isResolved": resolved, "path": "a.cpp", "line": 3,
-                "comments": {"nodes": [{"author": {"login": login}, "body": f"by {login}"}
-                                       for login in logins]}}
+                "comments": {"nodes": [
+                    {"author": {"login": login, "__typename": "Bot" if login in bots else "User"},
+                     "body": "**Minor: Found**" if login == "kodi-review" else f"by {login}"}
+                    for login in logins]}}
 
     def test_open_findings(self):
-        """Only the bot's unresolved threads without a reply from anyone else count."""
-        threads = [self.thread("T1", ["github-actions"]),
-                   self.thread("T2", ["github-actions"], resolved=True),
-                   self.thread("T3", ["github-actions", "MikeSiLVO"]),
-                   self.thread("T4", ["someone"])]
+        """Only the bot's unresolved findings without a reply from anyone else count."""
+        threads = [self.thread("T1", ["kodi-review"]),
+                   self.thread("T2", ["kodi-review"], resolved=True),
+                   self.thread("T3", ["kodi-review", "MikeSiLVO"]),
+                   self.thread("T4", ["someone"]),
+                   self.thread("T5", ["coderabbitai"])]
         self.assertEqual([f["id"] for f in review.open_findings(threads)], ["T1"])
 
     def test_post_resolves_listed_only(self):
@@ -428,9 +435,42 @@ class TrimTests(unittest.TestCase):
     def test_prior_finding_first_line(self):
         """An earlier finding keeps only its first line."""
         thread = {"id": "T1", "isResolved": False, "path": "a.cpp", "line": 2,
-                  "comments": {"nodes": [{"author": {"login": "github-actions"},
+                  "comments": {"nodes": [{"author": {"login": "kodi-review", "__typename": "Bot"},
                                           "body": "**Serious: Breaks**\n\nLong detail."}]}}
         self.assertEqual(review.open_findings([thread])[0]["finding"], "**Serious: Breaks**")
+
+
+class RenderCommandTests(unittest.TestCase):
+    """Rendering a review without posting it."""
+
+    def render(self, status, result):
+        """Run the render command on the given files and return what it printed."""
+        with mock.patch.object(sys, "argv", ["review.py", "render", status, result]), \
+                mock.patch("builtins.print") as printed:
+            review.cmd_render()
+        return printed.call_args.args[0]
+
+    def test_unfinished_review(self):
+        """A missing or empty result renders as an unfinished review."""
+        self.assertEqual(self.render("/nonexistent/status.json", "/nonexistent/result.json"),
+                         "The review did not finish.")
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp, "result.json")
+            empty.write_text("")
+            self.assertEqual(self.render(str(Path(tmp, "status.json")), str(empty)),
+                             "The review did not finish.")
+
+    def test_without_status(self):
+        """A blind replay has no status file and still renders its findings."""
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp, "result.json")
+            finding = {"path": "a.cpp", "line": 2, "severity": "Minor", "title": "Typo",
+                       "problem": "Misspelled.", "fix": "Spell it."}
+            result.write_text(json.dumps(dict(RESULT, verdict="Needs more work",
+                                              findings=[finding])))
+            text = self.render(str(Path(tmp, "status.json")), str(result))
+        self.assertTrue(text.startswith("### Needs more work · 1 problem (Minor)"))
+        self.assertIn("**Minor: Typo**", text)
 
 
 class WithheldTests(unittest.TestCase):

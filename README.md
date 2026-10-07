@@ -9,9 +9,10 @@ bot's home once a GitHub App can post its reviews on xbmc/xbmc.
 
 ## How a review runs
 
-1. Dispatch `review.yml` with an upstream pull request number. Two optional inputs: a commit for a
-   blind replay, which reviews the pull request as it stood then without its discussion or status,
-   and the effort level (high by default).
+1. Dispatch `review.yml` with a pull request number. Optional inputs: the repository (xbmc/xbmc by
+   default), the effort level (high by default), a dry run that writes the review to the run's
+   summary page instead of posting it, and a commit for a blind replay, which reviews the pull
+   request as it stood then, without its discussion or status, and also posts nothing.
 2. Each finding is posted as a line comment, and one summary comment is kept up to date. A later
    run reviews only new commits, resolves findings the code has fixed, and does not repeat ones
    still open.
