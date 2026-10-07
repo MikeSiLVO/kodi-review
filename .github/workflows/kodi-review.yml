@@ -122,7 +122,9 @@ jobs:
       - name: Remove agent config from the pull request code
         run: |
           rm -rf .claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md \
-            CLAUDE.local.md .husky
+            CLAUDE.local.md .husky .kodi-review-run .kodi-review-bot
+          find . -path ./.git -prune -o \( -name .claude -o -name CLAUDE.md \
+            -o -name CLAUDE.local.md -o -name AGENTS.md \) -prune -exec rm -rf {} +
 
       - name: Check out the review bot
         uses: actions/checkout@v6
@@ -175,6 +177,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          settings: '{"permissions": {"blockReadsOutsideWorkingDirectories": true}}'
           prompt: |
             Review upstream Kodi pull request ${{ inputs.pr }}, mirrored here as pull request
             ${{ needs.mirror.outputs.fork_pr }}. Follow the review instructions in your system
@@ -185,6 +188,7 @@ jobs:
             --effort medium
             --max-turns 40
             --append-system-prompt-file .kodi-review-bot/.github/kodi-review/REVIEW.md
+            --permission-mode dontAsk
             --allowedTools "Read(./**)" "Grep(./**)" "Glob(./**)"
             --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"
             --disallowedTools "Read(//proc/**)" "Read(//sys/**)" "Read(~/.claude/**)"
