@@ -359,11 +359,13 @@ def attachable_lines(patch):
 
 
 def load_result():
-    """Load the structured review result, or None when it is missing or malformed."""
+    """Load the structured review result or the withheld marker; None when missing or malformed."""
     try:
         result = json.loads(os.environ.get("RESULT") or "null")
     except json.JSONDecodeError:
         return None
+    if isinstance(result, dict) and result.get("withheld") is True:
+        return result
     if not isinstance(result, dict) or any(key not in result for key in REQUIRED):
         return None
     return result
@@ -614,6 +616,9 @@ def cmd_post():
         upsert_summary(reviewed_sha(),
                        "The review did not finish, so nothing was posted. Re-run it.")
         return
+    if result.get("withheld"):
+        upsert_summary(reviewed_sha(), WITHHELD)
+        sys.exit(1)
     prior = load_prior()
     listed = {f.get("id") for f in prior if f.get("status", "open") == "open"}
     fixed = [tid for tid in dict.fromkeys(result.get("fixed") or []) if tid in listed]
@@ -741,7 +746,8 @@ def cmd_reply():
     reply = unlinked((result.get("reply") or "").strip()) or NO_ANSWER
     withdraw = unlinked((result.get("withdraw") or "").strip())
     accept = unlinked((result.get("accept") or "").strip())
-    leaked = any(CREDENTIAL.search(text) for text in (reply, withdraw, accept))
+    leaked = result.get("withheld") is True or any(
+        CREDENTIAL.search(text) for text in (reply, withdraw, accept))
     if leaked:
         reply, withdraw, accept = WITHHELD, "", ""
     pr = os.environ["FORK_PR"]
@@ -779,13 +785,16 @@ def cmd_preload():
 
 
 def cmd_render():
-    """Render a result's summary comment without posting, or note the review did not finish."""
+    """Render a result's summary comment without posting, or the withheld or unfinished note."""
     status_file, result_file = Path(sys.argv[2]), Path(sys.argv[3])
     status = json.loads(status_file.read_text()) if status_file.exists() else {}
     try:
         result = json.loads(result_file.read_text())
     except (OSError, json.JSONDecodeError):
         result = None
+    if isinstance(result, dict) and result.get("withheld") is True:
+        print(WITHHELD)
+        return
     if not isinstance(result, dict) or any(key not in result for key in REQUIRED):
         print("The review did not finish.")
         return
@@ -826,6 +835,21 @@ def usage_lines(messages):
     return lines
 
 
+def cmd_keep():
+    """Keep the run's result in result.json, or only a withheld marker if it holds a credential."""
+    try:
+        messages = json.loads(Path(sys.argv[2]).read_text())
+    except (OSError, IndexError, json.JSONDecodeError):
+        messages = []
+    found = [m.get("structured_output") for m in messages
+             if isinstance(m, dict) and m.get("type") == "result"]
+    text = json.dumps(found[-1], ensure_ascii=False) if found and found[-1] is not None else ""
+    if CREDENTIAL.search(text):
+        text = json.dumps({"withheld": True})
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "result.json").write_text(text)
+
+
 def cmd_usage():
     """Print the review's tool calls and token totals from its execution file."""
     print("\n".join(usage_lines(json.loads(Path(sys.argv[2]).read_text()))))
@@ -835,7 +859,7 @@ COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_pie
             "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
-            "preload": cmd_preload,
+            "preload": cmd_preload, "keep": cmd_keep,
             "usage": cmd_usage}
 
 if __name__ == "__main__":

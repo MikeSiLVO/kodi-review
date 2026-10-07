@@ -663,6 +663,14 @@ class AnswerTests(unittest.TestCase):
                                   {"body": "> @\u200bkodi-review summarize it\n\n"
                                            "The lock is the problem."})])
 
+    def test_withheld_answer(self):
+        """A result the review job withheld becomes the withheld note and fails the step."""
+        calls, code = self.run_reply({"kind": "issue", "comment": 9, "finding": 1, "quote": ""},
+                                     {"withheld": True})
+        self.assertEqual(calls, [("POST", f"/repos/{review.REPO}/issues/7/comments",
+                                  {"body": review.WITHHELD})])
+        self.assertEqual(code, 1)
+
     def test_failed_or_leaking_answer(self):
         """No answer says so; an answer carrying a credential is withheld and fails the step."""
         asked = {"kind": "issue", "comment": 9, "finding": None, "quote": ""}
@@ -674,6 +682,59 @@ class AnswerTests(unittest.TestCase):
         calls, code = self.run_reply(asked, {"reply": "ghp_" + "a" * 36, "withdraw": ""})
         self.assertEqual(calls[0][2]["body"], review.WITHHELD)
         self.assertEqual(code, 1)
+
+
+class KeepTests(unittest.TestCase):
+    """The result kept for the post job."""
+
+    def keep(self, messages):
+        """Run the keep command on an execution file and return the result.json it writes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp, ".kodi-review-run")
+            execution = Path(tmp, "execution.json")
+            if messages is not None:
+                execution.write_text(json.dumps(messages))
+            with mock.patch.object(review, "RUN_DIR", run), \
+                    mock.patch.object(sys, "argv", ["review.py", "keep", str(execution)]):
+                review.cmd_keep()
+            return (run / "result.json").read_text()
+
+    def test_result_kept(self):
+        """The last result message's structured output is kept as JSON."""
+        kept = self.keep([{"type": "assistant"}, {"type": "result", "structured_output": RESULT}])
+        self.assertEqual(json.loads(kept), RESULT)
+
+    def test_credential_never_kept(self):
+        """A result holding a credential is replaced by the withheld marker before it is saved."""
+        leak = dict(RESULT, summary="Token ghp_" + "a" * 36)
+        kept = self.keep([{"type": "result", "structured_output": leak}])
+        self.assertEqual(json.loads(kept), {"withheld": True})
+        self.assertNotIn("ghp_", kept)
+
+    def test_no_result(self):
+        """A run that never finished keeps an empty result."""
+        self.assertEqual(self.keep(None), "")
+        self.assertEqual(self.keep([{"type": "result"}]), "")
+
+    def test_withheld_result_posts_only_the_note(self):
+        """The post command posts the withheld note and fails; render prints it."""
+        withheld = json.dumps({"withheld": True})
+        with mock.patch.object(review, "summary_comment", return_value=None), \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
+                                             "RESULT": withheld}), \
+                self.assertRaises(SystemExit) as stop:
+            review.cmd_post()
+        self.assertEqual(stop.exception.code, 1)
+        self.assertTrue(request.call_args.args[2]["body"].endswith(review.WITHHELD))
+        with tempfile.TemporaryDirectory() as tmp:
+            result = Path(tmp, "result.json")
+            result.write_text(withheld)
+            with mock.patch.object(sys, "argv", ["review.py", "render", str(Path(tmp, "s")),
+                                                 str(result)]), \
+                    mock.patch("builtins.print") as printed:
+                review.cmd_render()
+        printed.assert_called_once_with(review.WITHHELD)
 
 
 class PreloadTests(unittest.TestCase):

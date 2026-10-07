@@ -234,6 +234,8 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           settings: '{"permissions": {"blockReadsOutsideWorkingDirectories": true}}'
+          display_report: "false"
+          show_full_output: "false"
           prompt: |
             ${{ steps.prep.outputs.task }} pull request ${{ inputs.pr }} in ${{ env.UPSTREAM }}.
             Follow the instructions in your system prompt. The prepared files in
@@ -264,8 +266,8 @@ jobs:
       - name: Keep the result for the post job
         if: always() && steps.prep.outcome == 'success'
         env:
-          RESULT: ${{ steps.claude.outputs.structured_output }}
-        run: printf '%s' "$RESULT" > .kodi-review-run/result.json
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: python3 "$BOT/review.py" keep "$EXECUTION_FILE"
 
       - name: Hand the result to the post job
         if: always() && steps.prep.outcome == 'success'
