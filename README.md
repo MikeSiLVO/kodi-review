@@ -9,10 +9,14 @@ bot's home once a GitHub App can post its reviews on xbmc/xbmc.
 
 ## How a review runs
 
-1. Dispatch `review.yml` with a pull request number. Optional inputs: the repository (xbmc/xbmc by
-   default), the effort level (high by default), a dry run that writes the review to the run's
-   summary page instead of posting it, and a commit for a blind replay, which reviews the pull
-   request as it stood then, without its discussion or status, and also posts nothing.
+1. Someone with write access to the repo mentions `@kodi-review` in a comment on an open pull
+   request. The comment gets a 👀 reaction and the review starts.
+
+   `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the
+   repository (xbmc/xbmc by default), the effort level (high by default), a dry run that writes
+   the review to the run's summary page instead of posting it, and a commit for a blind replay,
+   which reviews the pull request as it stood then, without its discussion or status, and also
+   posts nothing.
 2. Each finding is posted as a line comment, and one summary comment is kept up to date. A later
    run reviews only new commits, marks the findings the code has fixed, and does not repeat ones
    still open.
@@ -25,6 +29,9 @@ bot's home once a GitHub App can post its reviews on xbmc/xbmc.
 | `schema.json` | The result Claude returns |
 | `review.py` | Prepares the inputs, posts the review, prints each run's token use |
 | `test_review.py` | Offline tests: `python3 -m unittest test_review` |
+| `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
+| `relay/wrangler.toml` | The Worker's address and settings |
+| `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
 
 ## Security
 
@@ -37,4 +44,6 @@ The reviewer reads code and text written by strangers, so it gets as little as p
   request cannot give the reviewer its own instructions, hooks or tools.
 - Output that looks like a credential is withheld. Mentions and pull request references are
   unlinked before posting.
-- Only people with write access to this repo can start a review.
+- Only people with write access to the reviewed repo can start a review by mentioning it, and
+  only people with write access to this repo can dispatch one by hand. A mention starts a review
+  only in the repos the relay lists.

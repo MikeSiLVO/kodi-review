@@ -48,6 +48,9 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
         comments(first: 20) { nodes { databaseId author { login __typename } body } } }
 }}}}"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
+BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
+ASKER = re.compile(r"(issue|review)/(\d+)")
+CAN_ASK = ("admin", "write")
 
 
 def request(method, path, body=None, raw=False) -> Any:
@@ -621,6 +624,31 @@ def cmd_post():
     upsert_summary(head, summary)
 
 
+def cmd_trigger():
+    """Exit 1 unless a writer's comment on this pull request mentions the bot; react to it."""
+    asker = ASKER.fullmatch(os.environ.get("COMMENT", ""))
+    if not asker:
+        sys.exit(f"Not a comment: {os.environ.get('COMMENT')}")
+    kind, number = asker.groups()
+    path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
+    comment = request("GET", path)
+    pr_url = comment.get("issue_url") or comment.get("pull_request_url") or ""
+    if (not BOT_MENTION.search(comment.get("body") or "")
+            or not pr_url.endswith(f"/{os.environ['FORK_PR']}")):
+        sys.exit("The comment does not ask for a review of this pull request.")
+    login = (comment.get("user") or {}).get("login", "")
+    try:
+        access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
+    except urllib.error.HTTPError:
+        access = "none"
+    if access not in CAN_ASK:
+        sys.exit(f"{login} has {access} access; asking for a review needs write access.")
+    try:
+        request("POST", f"{path}/reactions", {"content": "eyes"})
+    except urllib.error.URLError as err:
+        print(f"Could not react: {err}")
+
+
 def cmd_render():
     """Render a result's summary comment without posting, or note the review did not finish."""
     status_file, result_file = Path(sys.argv[2]), Path(sys.argv[3])
@@ -667,7 +695,7 @@ def cmd_usage():
 COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers,
             "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
-            "usage": cmd_usage}
+            "trigger": cmd_trigger, "usage": cmd_usage}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

@@ -20,3 +20,4 @@ jobs:
       - run: pip install pyright
       - run: python -m unittest -v test_review
       - run: pyright review.py test_review.py
+      - run: node --test relay/worker.test.mjs

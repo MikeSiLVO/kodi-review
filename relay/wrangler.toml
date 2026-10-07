@@ -1,0 +1,9 @@
+name = "kodi-review-relay"
+main = "worker.mjs"
+compatibility_date = "2026-10-01"
+workers_dev = true
+routes = [{ pattern = "kodi-review.silvo.cc", custom_domain = true }]
+
+[vars]
+BOT_REPO = "MikeSiLVO/kodi-review"
+ALLOWED_REPOS = "xbmc/xbmc MikeSiLVO/xbmc"

@@ -27,6 +27,10 @@ on:
         required: false
         type: boolean
         default: false
+      comment:
+        description: "Comment that asked for the review, as issue/ID or review/ID"
+        required: false
+        type: string
 
 concurrency:
   group: kodi-review-${{ inputs.repo }}-${{ inputs.pr }}
@@ -40,8 +44,52 @@ env:
   REPLAY_SHA: ${{ inputs.sha }}
 
 jobs:
+  trigger:
+    if: github.repository_owner == 'MikeSiLVO' && inputs.comment != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      allowed: ${{ steps.check.outcome == 'success' }}
+    steps:
+      - name: Check out the review bot
+        uses: actions/checkout@v6
+        with:
+          path: bot
+          persist-credentials: false
+
+      - name: Split the repository name
+        id: target
+        run: |
+          [[ "$UPSTREAM" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+            || { echo "Not a repo: $UPSTREAM"; exit 1; }
+          echo "owner=${UPSTREAM%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${UPSTREAM#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Get an App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
+          private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+          permission-pull-requests: write
+
+      - name: Check the comment that asked for the review
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          COMMENT: ${{ inputs.comment }}
+        run: python3 bot/review.py trigger
+
   review:
-    if: github.repository_owner == 'MikeSiLVO'
+    needs: trigger
+    if: >-
+      github.repository_owner == 'MikeSiLVO' && !cancelled()
+      && (inputs.comment == '' || needs.trigger.outputs.allowed == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from email.message import Message
 from pathlib import Path
 from unittest import mock
 
@@ -449,6 +450,67 @@ class TrimTests(unittest.TestCase):
                   "comments": {"nodes": [{"author": {"login": "kodi-review", "__typename": "Bot"},
                                           "body": "**Serious: Breaks**\n\nLong detail."}]}}
         self.assertEqual(review.open_findings([thread])[0]["finding"], "**Serious: Breaks**")
+
+
+class TriggerTests(unittest.TestCase):
+    """Deciding whether a comment may start a review."""
+
+    def run_trigger(self, comment, access="write", asker="issue/5"):
+        """Run the trigger command on fake GitHub replies; return the requests and exit code."""
+        calls, refusals = [], []
+
+        def reply(method, path, body=None, raw=False):
+            """Reply like GitHub for the comment and the commenter's access."""
+            calls.append((method, path))
+            if path.endswith("/permission"):
+                if access is None:
+                    refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
+                    raise refusals[-1]
+                return {"permission": access}
+            if method == "GET":
+                return comment
+            return None
+        with mock.patch.object(review, "request", side_effect=reply), \
+                mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7"}):
+            try:
+                review.cmd_trigger()
+            except SystemExit as stop:
+                return calls, stop.code
+            finally:
+                for refusal in refusals:
+                    refusal.close()
+        return calls, None
+
+    def comment(self, body="@kodi-review review", url="https://api.github.com/repos/o/r/issues/7"):
+        """Return a comment by a person on pull request 7."""
+        return {"body": body, "issue_url": url, "user": {"login": "dev"}}
+
+    def test_writer_mention_starts_and_is_acknowledged(self):
+        """A writer's mention on this pull request starts and is acknowledged with a reaction."""
+        calls, code = self.run_trigger(self.comment())
+        self.assertIsNone(code)
+        self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
+
+    def test_line_comment_is_read_from_pulls(self):
+        """A line comment is read from the pull request comments and passes."""
+        comment = {"body": "@KODI-REVIEW why?", "user": {"login": "dev"},
+                   "pull_request_url": "https://api.github.com/repos/o/r/pulls/7"}
+        calls, code = self.run_trigger(comment, asker="review/6")
+        self.assertIsNone(code)
+        self.assertEqual(calls[0], ("GET", f"/repos/{review.REPO}/pulls/comments/6"))
+
+    def test_refused(self):
+        """No mention, another pull request, read access, no access or a bad id are refused."""
+        cases = [(self.comment(body="thanks @kodi-reviewer"), "write", "issue/5"),
+                 (self.comment(url="https://api.github.com/repos/o/r/issues/17"), "write",
+                  "issue/5"),
+                 (self.comment(), "read", "issue/5"),
+                 (self.comment(), None, "issue/5"),
+                 (self.comment(), "write", "issue/5; rm")]
+        for comment, access, asker in cases:
+            calls, code = self.run_trigger(comment, access, asker)
+            self.assertTrue(code, (access, asker))
+            self.assertNotIn("POST", [method for method, _ in calls])
 
 
 class RenderCommandTests(unittest.TestCase):
