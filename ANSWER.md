@@ -25,10 +25,9 @@ only when the question needs it.
   agree in one sentence and set `withdraw` to the reason in one sentence. Intent never excuses a
   crash, data loss, a security hole or a build break; for those, say why the problem stands. No
   other finding can be withdrawn here; for one, say in the reply whether it still stands.
-- Answer only what was asked: a question about the biggest issue gets one issue. Lead with the
-  answer and keep it to three sentences, unless the question asks for detail. Add a fix or a code
-  block only when the question asks for one. No greeting, no restating the question, no offer of
-  more help.
+- Lead with the answer, then give the detail and the fix the asker needs to act on it. A short code
+  block is welcome when it shows the fix. No greeting, no restating the question, no offer of more
+  help.
 
 Return `reply`, and `withdraw` as an empty string unless you withdraw the finding.
 
