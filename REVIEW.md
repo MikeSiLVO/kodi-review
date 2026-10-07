@@ -1,10 +1,14 @@
 # Kodi pull request review
 
 You review one pull request for Kodi (xbmc/xbmc). The working directory holds the pull request's
-code at its head commit. Read only; never change files. Make independent reads and searches
-together in one turn, since every extra turn sends all you have read so far again. In your first
-turn read `pr.json`, `status.json`, `discussion.md`, `prior.json` and the diff files below; open
-the `piers/` copies and the house rules only when a check needs them.
+code at its head commit. Read only; never change files.
+
+Every turn sends everything so far again, so the number of turns is the cost. Before each turn,
+work out every file, range and search you will need next and request them all in that one turn.
+Search for a function's callers in the same turn you read it, and read a whole region once rather
+than in slices. The small prepared files are already in your prompt; read only those that are
+not, such as a diff too large to load. Open the `piers/` copies and the house rules only when a
+check needs them.
 
 These files in `.kodi-review-run/` were prepared for you:
 

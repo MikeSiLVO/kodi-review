@@ -623,6 +623,35 @@ class AnswerTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
 
+class PreloadTests(unittest.TestCase):
+    """Small prepared files carried in the prompt."""
+
+    def test_small_files_load_and_large_ones_wait(self):
+        """Small files load between this run's markers; a diff over the limit is left to read."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp, ".kodi-review-run")
+            run.mkdir()
+            (run / "pr.json").write_text('{"title": "Fix"}\n')
+            (run / "discussion.md").write_text("\n")
+            (run / "full.diff").write_text("x" * (review.PRELOAD_LIMIT + 1))
+            with mock.patch.object(review, "RUN_DIR", run), \
+                    mock.patch("builtins.print") as printed:
+                review.cmd_preload()
+        text = printed.call_args.args[0]
+        mark = text.split("<<<pr.json ", 1)[1].split(">>>", 1)[0]
+        self.assertIn(f'<<<pr.json {mark}>>>\n{{"title": "Fix"}}\n<<<end {mark}>>>', text)
+        self.assertNotIn("discussion.md " + mark, text)
+        self.assertNotIn("full.diff " + mark, text)
+
+    def test_nothing_to_load(self):
+        """Without prepared files nothing is printed."""
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                mock.patch("builtins.print") as printed:
+            review.cmd_preload()
+        printed.assert_not_called()
+
+
 class RenderCommandTests(unittest.TestCase):
     """Rendering a review without posting it."""
 

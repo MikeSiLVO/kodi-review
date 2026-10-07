@@ -198,6 +198,12 @@ jobs:
             echo "task=Review" >> "$GITHUB_OUTPUT"
           fi
           echo "files=$(cd .kodi-review-run && ls -dp -- * | paste -sd' ')" >> "$GITHUB_OUTPUT"
+          mark=$(openssl rand -hex 8)
+          {
+            echo "preload<<PRELOAD_$mark"
+            python3 "$BOT/review.py" preload
+            echo "PRELOAD_$mark"
+          } >> "$GITHUB_OUTPUT"
           echo "prepared=true" >> "$GITHUB_OUTPUT"
 
       - name: Install bubblewrap for the subprocess env scrub
@@ -217,9 +223,10 @@ jobs:
           prompt: |
             ${{ steps.prep.outputs.task }} pull request ${{ inputs.pr }} in ${{ env.UPSTREAM }}.
             Follow the instructions in your system prompt. The prepared files in
-            .kodi-review-run are: ${{ steps.prep.outputs.files }}. Read the ones your
-            instructions name in your first turn, then return the result in the required
-            structured format.
+            .kodi-review-run are: ${{ steps.prep.outputs.files }}. Return the result in the
+            required structured format.
+
+            ${{ steps.prep.outputs.preload }}
           claude_args: |
             --model claude-opus-5-5
             --effort ${{ inputs.effort || 'high' }}
