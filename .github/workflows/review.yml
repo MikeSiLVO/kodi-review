@@ -60,7 +60,7 @@ jobs:
       contents: read
     steps:
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: bot
           persist-credentials: false
@@ -75,7 +75,7 @@ jobs:
 
       - name: Get an App token
         id: app
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
@@ -124,7 +124,7 @@ jobs:
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
 
       - name: Check out the pull request code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: ${{ env.UPSTREAM }}
           ref: ${{ steps.refs.outputs.head_sha }}
@@ -139,7 +139,7 @@ jobs:
             -o -name CLAUDE.local.md -o -name AGENTS.md \) -prune -exec rm -rf {} +
 
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .kodi-review-bot
           persist-credentials: false
@@ -227,7 +227,7 @@ jobs:
 
       - name: Review
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
@@ -269,7 +269,7 @@ jobs:
 
       - name: Hand the result to the post job
         if: always() && steps.prep.outcome == 'success'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: review
           include-hidden-files: true
@@ -295,13 +295,13 @@ jobs:
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
     steps:
       - name: Check out the review bot
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: bot
           persist-credentials: false
 
       - name: Get the review result
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: review
           path: .kodi-review-run
@@ -322,7 +322,7 @@ jobs:
       - name: Get an App token
         id: app
         if: ${{ !inputs.dry_run && inputs.sha == '' }}
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
