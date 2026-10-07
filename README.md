@@ -14,7 +14,7 @@ bot's home once a GitHub App can post its reviews on xbmc/xbmc.
    summary page instead of posting it, and a commit for a blind replay, which reviews the pull
    request as it stood then, without its discussion or status, and also posts nothing.
 2. Each finding is posted as a line comment, and one summary comment is kept up to date. A later
-   run reviews only new commits, resolves findings the code has fixed, and does not repeat ones
+   run reviews only new commits, marks the findings the code has fixed, and does not repeat ones
    still open.
 
 ## Files

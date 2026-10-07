@@ -45,11 +45,9 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
     reviewThreads(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
       nodes { id isResolved path line
-        comments(first: 20) { nodes { author { login __typename } body } } }
+        comments(first: 20) { nodes { databaseId author { login __typename } body } } }
 }}}}"""
-RESOLVE_MUTATION = """mutation($id: ID!) {
-  resolveReviewThread(input: {threadId: $id}) { thread { isResolved } }
-}"""
+FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 
 
 def request(method, path, body=None, raw=False) -> Any:
@@ -364,7 +362,7 @@ def graphql(query, **variables):
 
 
 def open_findings(threads):
-    """Return the bot's unresolved threads that nobody else replied to, as earlier findings."""
+    """Return the bot's unresolved threads not yet marked fixed that nobody else replied to."""
     found = []
     for t in threads:
         comments = t["comments"]["nodes"]
@@ -373,8 +371,8 @@ def open_findings(threads):
                 or not PRIOR_SEVERITY.match(comments[0]["body"])
                 or any((c["author"] or {}).get("login") != first.get("login") for c in comments)):
             continue
-        found.append({"id": t["id"], "path": t["path"], "line": t["line"],
-                      "finding": comments[0]["body"].split("\n", 1)[0][:160]})
+        found.append({"id": t["id"], "comment": comments[0].get("databaseId"), "path": t["path"],
+                      "line": t["line"], "finding": comments[0]["body"].split("\n", 1)[0][:160]})
     return found
 
 
@@ -543,7 +541,7 @@ def verdict_line(result, status):
     return f"{verdict} · {len(findings)} problem{plural} ({detail})"
 
 
-def summary_text(result, status, head, loose, rerun, resolved=0, still_open=()):
+def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
     """Format the summary comment, verdict as a heading and the Where it stands facts as a list."""
     counted = dict(result, findings=result["findings"] + list(still_open))
     parts = [f"### {verdict_line(counted, status)}\n{result['summary']}"]
@@ -553,8 +551,8 @@ def summary_text(result, status, head, loose, rerun, resolved=0, still_open=()):
     lines = status_lines(status, result)
     parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
     footer = f"Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}."
-    if resolved:
-        footer += f" Resolved {resolved} earlier finding{'s' if resolved != 1 else ''}."
+    if fixed:
+        footer += f" {fixed} earlier finding{'s' if fixed != 1 else ''} fixed."
     if still_open:
         footer += f" {len(still_open)} earlier finding{'s' if len(still_open) != 1 else ''}"
         footer += " still open."
@@ -572,20 +570,23 @@ def upsert_summary(sha, text):
         request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments", {"body": body})
 
 
-def resolve_threads(ids):
-    """Resolve review threads, logging any that fail; return how many it resolved."""
-    resolved = 0
+def mark_fixed(prior, ids, head):
+    """Mark each fixed finding's comment with the fixing commit; return how many it marked."""
+    comments = {f.get("id"): f.get("comment") for f in prior}
+    marked = 0
     for tid in ids:
+        path = f"/repos/{REPO}/pulls/comments/{comments.get(tid)}"
         try:
-            graphql(RESOLVE_MUTATION, id=tid)
-            resolved += 1
-        except (urllib.error.URLError, RuntimeError, KeyError) as err:
-            print(f"Could not resolve {tid}: {err}")
-    return resolved
+            body = request("GET", path)["body"]
+            request("PATCH", path, {"body": FIXED_NOTE.format(head[:12]) + body})
+            marked += 1
+        except (urllib.error.URLError, KeyError, TypeError) as err:
+            print(f"Could not mark {tid} fixed: {err}")
+    return marked
 
 
 def cmd_post():
-    """Post new findings, resolve fixed earlier ones, or note a failure; exit 1 on a credential."""
+    """Post new findings, mark fixed earlier ones, or note a failure; exit 1 on a credential."""
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
@@ -611,10 +612,9 @@ def cmd_post():
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
         upsert_summary(reviewed_sha(), WITHHELD)
         sys.exit(1)
-    resolved = resolve_threads(fixed)
-    if resolved != len(fixed):
-        summary = unlinked(summary_text(result, status, head, loose, rerun, resolved,
-                                        still_open))
+    marked = mark_fixed(prior, fixed, head)
+    if marked != len(fixed):
+        summary = unlinked(summary_text(result, status, head, loose, rerun, marked, still_open))
     if inline:
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})

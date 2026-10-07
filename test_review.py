@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -296,62 +297,72 @@ class DiscussionTests(unittest.TestCase):
 
 
 class PriorTests(unittest.TestCase):
-    """Earlier findings: which stay open and which get resolved."""
+    """Earlier findings: which stay open and which get marked fixed."""
 
-    def thread(self, tid, logins, resolved=False):
+    def thread(self, tid, logins, resolved=False, body="**Minor: Found**"):
         """Return a review thread shaped like the GraphQL reviewThreads nodes."""
         bots = {"kodi-review", "coderabbitai"}
         return {"id": tid, "isResolved": resolved, "path": "a.cpp", "line": 3,
                 "comments": {"nodes": [
-                    {"author": {"login": login, "__typename": "Bot" if login in bots else "User"},
-                     "body": "**Minor: Found**" if login == "kodi-review" else f"by {login}"}
+                    {"databaseId": 11, "body": body if login == "kodi-review" else f"by {login}",
+                     "author": {"login": login, "__typename": "Bot" if login in bots else "User"}}
                     for login in logins]}}
 
     def test_open_findings(self):
-        """Only the bot's unresolved findings without a reply from anyone else count."""
+        """Only the bot's open findings without a reply from anyone else count."""
         threads = [self.thread("T1", ["kodi-review"]),
                    self.thread("T2", ["kodi-review"], resolved=True),
                    self.thread("T3", ["kodi-review", "MikeSiLVO"]),
                    self.thread("T4", ["someone"]),
-                   self.thread("T5", ["coderabbitai"])]
-        self.assertEqual([f["id"] for f in review.open_findings(threads)], ["T1"])
+                   self.thread("T5", ["coderabbitai"]),
+                   self.thread("T6", ["kodi-review"],
+                               body=review.FIXED_NOTE.format("a" * 12) + "**Minor: Found**")]
+        found = review.open_findings(threads)
+        self.assertEqual([f["id"] for f in found], ["T1"])
+        self.assertEqual(found[0]["comment"], 11)
 
-    def test_post_resolves_listed_only(self):
-        """Only listed fixed ids are resolved, once each; open ones still count in the verdict."""
+    def test_post_marks_listed_only(self):
+        """Only listed fixed ids get the note, once each; open ones still count in the verdict."""
         result = dict(RESULT, fixed=["T1", "T9", "T1"])
+        path = f"/repos/{review.REPO}/pulls/comments/11"
         with mock.patch.object(review, "summary_comment", return_value=None), \
                 mock.patch.object(review, "changed_files", return_value=[]), \
                 mock.patch.object(review, "load_prior", return_value=[
-                    {"id": "T1", "finding": "**Minor: A**"},
-                    {"id": "T2", "finding": "**Moderate:** B"}]), \
-                mock.patch.object(review, "request") as request, \
-                mock.patch.object(review, "graphql") as graphql, \
+                    {"id": "T1", "comment": 11, "finding": "**Minor: A**"},
+                    {"id": "T2", "comment": 12, "finding": "**Moderate:** B"}]), \
+                mock.patch.object(review, "request",
+                                  return_value={"body": "**Minor: A**"}) as request, \
                 mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
                                              "RESULT": json.dumps(result)}):
             review.cmd_post()
-        graphql.assert_called_once_with(review.RESOLVE_MUTATION, id="T1")
+        edits = [c.args for c in request.call_args_list if c.args[0] == "PATCH"]
+        self.assertEqual(edits, [("PATCH", path, {"body": "**Fixed in `bbbbbbbbbbbb`.**\n\n"
+                                                          "**Minor: A**"})])
         body = request.call_args.args[2]["body"]
-        self.assertIn("Resolved 1 earlier finding. 1 earlier finding still open.", body)
+        self.assertIn("1 earlier finding fixed. 1 earlier finding still open.", body)
         self.assertIn("### Needs more work · 1 problem (Moderate)", body)
 
 
-class ResolveTests(unittest.TestCase):
-    """Resolving earlier findings when GitHub refuses."""
+class MarkFixedTests(unittest.TestCase):
+    """Marking earlier findings fixed when GitHub refuses."""
 
-    def test_refused_resolution_not_counted(self):
-        """A refused resolution is logged, the step goes on, and the footer claims none."""
+    def test_refused_edit_not_counted(self):
+        """A refused edit is logged, the step goes on, and the footer claims none."""
+        def refuse(method, path, body=None, raw=False):
+            """Refuse every request for a review comment."""
+            if "/pulls/comments/" in path:
+                raise urllib.error.URLError("forbidden")
         result = dict(RESULT, fixed=["T1"])
         with mock.patch.object(review, "summary_comment", return_value=None), \
                 mock.patch.object(review, "changed_files", return_value=[]), \
                 mock.patch.object(review, "load_prior", return_value=[
-                    {"id": "T1", "finding": "**Minor: A**"}]), \
-                mock.patch.object(review, "request") as request, \
-                mock.patch.object(review, "graphql", side_effect=RuntimeError("forbidden")), \
+                    {"id": "T1", "comment": 11, "finding": "**Minor: A**"}]), \
+                mock.patch.object(review, "request", side_effect=refuse) as request, \
                 mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
                                              "RESULT": json.dumps(result)}), \
                 mock.patch("builtins.print"):
             review.cmd_post()
-        self.assertNotIn("Resolved", request.call_args.args[2]["body"])
+        self.assertNotIn("fixed.", request.call_args.args[2]["body"])
 
 
 class RepeatTests(unittest.TestCase):
