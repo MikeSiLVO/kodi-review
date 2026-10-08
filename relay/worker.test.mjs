@@ -80,7 +80,7 @@ test("a signed mention dispatches the review workflow", async (t) => {
     return new Response(null, { status: 204 });
   });
   const body = JSON.stringify(issueComment());
-  const request = new Request("https://kodi-review.silvo.cc/github", { method: "POST", body,
+  const request = new Request("https://relay.example/github", { method: "POST", body,
     headers: { "x-github-event": "issue_comment", "x-hub-signature-256": sign(body) } });
   const reply = await worker.fetch(request, ENV);
   assert.equal(reply.status, 202);
@@ -92,7 +92,7 @@ test("a signed mention dispatches the review workflow", async (t) => {
 
 test("an unsigned request is refused without dispatching", async (t) => {
   const fetched = t.mock.method(globalThis, "fetch", async () => new Response(null));
-  const request = new Request("https://kodi-review.silvo.cc/github", { method: "POST",
+  const request = new Request("https://relay.example/github", { method: "POST",
     body: "{}", headers: { "x-github-event": "issue_comment" } });
   assert.equal((await worker.fetch(request, ENV)).status, 401);
   assert.equal(fetched.mock.callCount(), 0);
