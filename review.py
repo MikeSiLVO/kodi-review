@@ -593,15 +593,23 @@ def upsert_summary(sha, text):
         request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments", {"body": body})
 
 
+def fold_finding(note, body):
+    """Fold a settled finding's detail away under its status line and title."""
+    title, _, rest = body.partition("\n")
+    rest = rest.strip()
+    details = f"\n\n<details><summary>Details</summary>\n\n{rest}\n\n</details>" if rest else ""
+    return f"{note}{title}{details}"
+
+
 def mark_fixed(prior, ids, head):
-    """Mark each fixed finding's comment with the fixing commit; return how many it marked."""
+    """Mark each fixed finding with its fixing commit and fold its detail; return the count."""
     comments = {f.get("id"): f.get("comment") for f in prior}
     marked = 0
     for tid in ids:
         path = f"/repos/{REPO}/pulls/comments/{comments.get(tid)}"
         try:
             body = request("GET", path)["body"]
-            request("PATCH", path, {"body": FIXED_NOTE.format(head[:12]) + body})
+            request("PATCH", path, {"body": fold_finding(FIXED_NOTE.format(head[:12]), body)})
             marked += 1
         except (urllib.error.URLError, KeyError, TypeError) as err:
             print(f"Could not mark {tid} fixed: {err}")
@@ -764,7 +772,7 @@ def cmd_reply():
         path = f"/repos/{REPO}/pulls/comments/{asked['finding']}"
         body = request("GET", path)["body"]
         if PRIOR_SEVERITY.match(body):
-            request("PATCH", path, {"body": note + body})
+            request("PATCH", path, {"body": note + body if accept else fold_finding(note, body)})
     if leaked:
         sys.exit(1)
 

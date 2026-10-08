@@ -319,7 +319,8 @@ class PriorTests(unittest.TestCase):
                    self.thread("T4", ["someone"]),
                    self.thread("T5", ["coderabbitai"]),
                    self.thread("T6", ["kodi-review"],
-                               body=review.FIXED_NOTE.format("a" * 12) + "**Minor: Found**"),
+                               body=review.fold_finding(review.FIXED_NOTE.format("a" * 12),
+                                                        "**Minor: Found**\n\nDetail.")),
                    self.thread("T7", ["kodi-review"],
                                body=review.ACCEPTED_NOTE.format("dev", "Merging anyway.")
                                + "**Minor: Found**\n\nDetail.")]
@@ -331,7 +332,7 @@ class PriorTests(unittest.TestCase):
         self.assertEqual(found[0]["comment"], 11)
 
     def test_post_marks_listed_only(self):
-        """Only listed fixed ids get the note, once each; open ones still count in the verdict."""
+        """Only listed fixed ids get the note and fold their detail; open ones still count."""
         result = dict(RESULT, fixed=["T1", "T9", "T1"])
         path = f"/repos/{review.REPO}/pulls/comments/11"
         with mock.patch.object(review, "summary_comment", return_value=None), \
@@ -340,13 +341,16 @@ class PriorTests(unittest.TestCase):
                     {"id": "T1", "comment": 11, "finding": "**Minor: A**"},
                     {"id": "T2", "comment": 12, "finding": "**Moderate:** B"}]), \
                 mock.patch.object(review, "request",
-                                  return_value={"body": "**Minor: A**"}) as request, \
+                                  return_value={"body": "**Minor: A**\n\nWhy.\n\n**Fix:** F"}
+                                  ) as request, \
                 mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
                                              "RESULT": json.dumps(result)}):
             review.cmd_post()
         edits = [c.args for c in request.call_args_list if c.args[0] == "PATCH"]
         self.assertEqual(edits, [("PATCH", path, {"body": "**Fixed in `bbbbbbbbbbbb`.**\n\n"
-                                                          "**Minor: A**"})])
+                                                          "**Minor: A**\n\n<details><summary>"
+                                                          "Details</summary>\n\nWhy.\n\n"
+                                                          "**Fix:** F\n\n</details>"})])
         body = request.call_args.args[2]["body"]
         self.assertIn("1 earlier finding fixed. 1 earlier finding still open.", body)
         self.assertIn("### Needs more work · 1 problem (Moderate)", body)
@@ -625,7 +629,7 @@ class AnswerTests(unittest.TestCase):
         Path(".kodi-review-run/question.json").write_text(json.dumps(asked))
         code = None
         with mock.patch.object(review, "request",
-                               return_value={"body": "**Minor: Leak**"}) as request, \
+                               return_value={"body": "**Minor: Leak**\n\nDetail."}) as request, \
                 mock.patch.dict(os.environ, {"FORK_PR": "7", "RESULT": json.dumps(result)}):
             try:
                 review.cmd_reply()
@@ -634,7 +638,7 @@ class AnswerTests(unittest.TestCase):
         return [c.args for c in request.call_args_list], code
 
     def test_thread_reply_and_withdraw(self):
-        """A conceded finding gets the answer in its thread and the withdrawn note on top."""
+        """A conceded finding is answered in its thread and withdrawn, its detail folded."""
         asked = {"kind": "review", "comment": 3, "finding": 1, "quote": "q"}
         calls, code = self.run_reply(asked, {"reply": "Agreed, @dev frees it.",
                                              "withdraw": "Freed later."})
@@ -643,7 +647,9 @@ class AnswerTests(unittest.TestCase):
         self.assertEqual(calls[0], ("POST", f"/repos/{repo}/pulls/7/comments/3/replies",
                                     {"body": "Agreed, @\u200bdev frees it."}))
         self.assertEqual(calls[-1], ("PATCH", f"/repos/{repo}/pulls/comments/1",
-                                     {"body": "**Withdrawn:** Freed later.\n\n**Minor: Leak**"}))
+                                     {"body": "**Withdrawn:** Freed later.\n\n**Minor: Leak**"
+                                              "\n\n<details><summary>Details</summary>\n\n"
+                                              "Detail.\n\n</details>"}))
 
     def test_accepted_finding_names_the_asker(self):
         """An accepted finding keeps its text under a note naming who accepted it."""
@@ -652,7 +658,7 @@ class AnswerTests(unittest.TestCase):
                                           "withdraw": "", "accept": "Merging with the failure."})
         self.assertEqual(calls[-1], ("PATCH", f"/repos/{review.REPO}/pulls/comments/1",
                                      {"body": "**Accepted by dev:** Merging with the failure."
-                                              "\n\n**Minor: Leak**"}))
+                                              "\n\n**Minor: Leak**\n\nDetail."}))
 
     def test_conversation_reply_quotes_the_question(self):
         """An answer in the main conversation quotes the question, and withdraws nothing."""
