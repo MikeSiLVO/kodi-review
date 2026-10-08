@@ -109,8 +109,8 @@ survives.
   matching C and C++ types.
 - State that must reset on failure, early return, empty input or mode switch: caches, path
   hashes, flags, cached device state.
-- Units and sentinels: milliseconds vs seconds, DVD_NOPTS_VALUE, zero or unknown duration,
-  signed/unsigned conversion.
+- Units and sentinels: milliseconds vs seconds, DVD_NOPTS_VALUE, zero meaning unknown or auto
+  (durations, sizes such as `<width>auto</width>`), signed/unsigned conversion.
 - Passwords or tokens reaching logs or dialogs; CURL::GetRedacted exists for this.
 - Nullable returns such as GetVideoInfoTag() used without a check; [0] on a list that can be
   empty.
