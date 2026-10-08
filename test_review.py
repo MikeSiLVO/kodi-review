@@ -211,6 +211,63 @@ class FailedRunTests(unittest.TestCase):
             self.assertEqual(review.reviewed_sha(), "")
 
 
+class SummaryTests(unittest.TestCase):
+    """The summary comment posted at the end of the conversation."""
+
+    def summary(self, cid, sha="a" * 40, kind="Bot"):
+        """Return an issue comment shaped like a summary the bot posted."""
+        return {"id": cid, "node_id": f"N{cid}", "user": {"type": kind},
+                "body": f"<!-- kodi-review sha={sha} -->\ntext"}
+
+    def test_newest_summary_wins(self):
+        """The last reviewed commit comes from the newest summary; people's comments never count."""
+        comments = [self.summary(1, "a" * 40), self.summary(2, "b" * 40),
+                    self.summary(3, "c" * 40, "User")]
+        with mock.patch.object(review, "paged", return_value=comments), \
+                mock.patch.dict(os.environ, {"FORK_PR": "7"}):
+            self.assertEqual(review.reviewed_sha(), "b" * 40)
+
+    def post(self, earlier, refuse=False):
+        """Post a finished review's summary over earlier ones; return the REST and GraphQL calls."""
+        def graphql(query, **variables):
+            """Report the first summary hidden already, refusing every hide when asked to."""
+            if query == review.SHOWN_QUERY:
+                return {"nodes": [{"id": "N1", "isMinimized": True},
+                                  {"id": "N2", "isMinimized": False}]}
+            if refuse:
+                raise RuntimeError("FORBIDDEN")
+            return {}
+        with mock.patch.object(review, "summary_comments", return_value=earlier), \
+                mock.patch.object(review, "graphql", side_effect=graphql) as gql, \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"FORK_PR": "7"}), \
+                mock.patch("builtins.print"):
+            review.post_summary("b" * 40, "new")
+        return [c.args[:2] for c in request.call_args_list], [c.kwargs for c in gql.call_args_list]
+
+    def test_new_summary_hides_shown_ones(self):
+        """The new summary goes at the end and only the earlier ones still shown get hidden."""
+        rest, graphql = self.post([self.summary(1), self.summary(2)])
+        self.assertEqual(rest, [("POST", f"/repos/{review.REPO}/issues/7/comments")])
+        self.assertEqual(graphql, [{"ids": ["N1", "N2"]}, {"id": "N2"}])
+
+    def test_refused_hide_deletes(self):
+        """A summary GitHub refuses to hide is deleted instead."""
+        rest, _ = self.post([self.summary(1), self.summary(2)], refuse=True)
+        self.assertEqual(rest, [("POST", f"/repos/{review.REPO}/issues/7/comments"),
+                                ("DELETE", f"/repos/{review.REPO}/issues/comments/2")])
+
+    def test_failure_note_hides_nothing(self):
+        """A note about a failed run leaves the last real summary shown."""
+        with mock.patch.object(review, "summary_comments") as lookup, \
+                mock.patch.object(review, "graphql") as graphql, \
+                mock.patch.object(review, "request"), \
+                mock.patch.dict(os.environ, {"FORK_PR": "7"}):
+            review.post_summary("a" * 40, review.WITHHELD, final=False)
+        lookup.assert_not_called()
+        graphql.assert_not_called()
+
+
 class UnlinkedTests(unittest.TestCase):
     """Posted text that pings nobody and links no pull request or issue."""
 
@@ -250,7 +307,7 @@ class UnlinkedTests(unittest.TestCase):
                    "problem": "Ask @a.", "fix": "See #12345."}
         result = dict(RESULT, summary="Since xbmc/xbmc#24720.", findings=[finding])
         files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n z"}]
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=files), \
                 mock.patch.object(review, "request") as request, \
                 mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
@@ -335,7 +392,7 @@ class PriorTests(unittest.TestCase):
         """Only listed fixed ids get the note and fold their detail; open ones still count."""
         result = dict(RESULT, fixed=["T1", "T9", "T1"])
         path = f"/repos/{review.REPO}/pulls/comments/11"
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=[]), \
                 mock.patch.object(review, "load_prior", return_value=[
                     {"id": "T1", "comment": 11, "finding": "**Minor: A**"},
@@ -366,7 +423,7 @@ class MarkFixedTests(unittest.TestCase):
             if "/pulls/comments/" in path:
                 raise urllib.error.URLError("forbidden")
         result = dict(RESULT, fixed=["T1"])
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=[]), \
                 mock.patch.object(review, "load_prior", return_value=[
                     {"id": "T1", "comment": 11, "finding": "**Minor: A**"}]), \
@@ -390,7 +447,7 @@ class RepeatTests(unittest.TestCase):
         other = dict(repeat, line=3, severity="Moderate", title="New")
         result = dict(RESULT, verdict="Needs more work", findings=[repeat, other])
         files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=files), \
                 mock.patch.object(review, "load_prior", return_value=prior), \
                 mock.patch.object(review, "request") as request, \
@@ -414,7 +471,7 @@ class RepeatTests(unittest.TestCase):
         new = dict(repeat, line=3, title="New")
         result = dict(RESULT, verdict="Needs more work", findings=[repeat, new])
         files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=files), \
                 mock.patch.object(review, "load_prior", return_value=prior), \
                 mock.patch.object(review, "request") as request, \
@@ -434,7 +491,7 @@ class RepeatTests(unittest.TestCase):
                  "problem": "Worse.", "fix": "Fix."}
         result = dict(RESULT, verdict="Needs more work", findings=[worse])
         files = [{"filename": "a.cpp", "patch": "@@ -1,2 +1,3 @@\n x\n+y\n+z"}]
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "changed_files", return_value=files), \
                 mock.patch.object(review, "load_prior", return_value=prior), \
                 mock.patch.object(review, "request") as request, \
@@ -725,7 +782,7 @@ class KeepTests(unittest.TestCase):
     def test_withheld_result_posts_only_the_note(self):
         """The post command posts the withheld note and fails; render prints it."""
         withheld = json.dumps({"withheld": True})
-        with mock.patch.object(review, "summary_comment", return_value=None), \
+        with mock.patch.object(review, "summary_comments", return_value=[]), \
                 mock.patch.object(review, "request") as request, \
                 mock.patch.dict(os.environ, {"HEAD_SHA": "b" * 40, "FORK_PR": "7",
                                              "RESULT": withheld}), \

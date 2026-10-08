@@ -19,9 +19,10 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
    the review to the run's summary page instead of posting it, and a commit for a blind replay,
    which reviews the pull request as it stood then, without its discussion or status, and also
    posts nothing.
-2. Each finding is posted as a line comment, and one summary comment is kept up to date. A later
-   run reviews only new commits, marks the findings the code has fixed, and does not repeat ones
-   still open.
+2. Each finding is posted as a line comment, and the summary is posted at the end of the
+   conversation, hiding the earlier ones as outdated. A later run reviews only what changed since
+   the last review, even after a force push, marks the findings the code has fixed, and does not
+   repeat ones still open.
 
 ## Asking questions
 

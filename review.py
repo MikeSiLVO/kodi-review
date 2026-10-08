@@ -48,6 +48,9 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
       nodes { id isResolved path line
         comments(first: 20) { nodes { databaseId author { login __typename } body } } }
 }}}}"""
+SHOWN_QUERY = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on IssueComment { id isMinimized } } }"
+HIDE_MUTATION = """mutation($id: ID!) {
+  minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
 ACCEPTED_NOTE = "**Accepted by {}:** {}\n\n"
@@ -93,12 +96,16 @@ def paged(path):
         page += 1
 
 
+def summary_comments():
+    """Return the bot's summary comments on the pull request, oldest first."""
+    return [c for c in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments")
+            if c["user"]["type"] == "Bot" and MARKER.match(c["body"])]
+
+
 def summary_comment():
-    """Return the bot's summary comment on the pull request, or None."""
-    for comment in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments"):
-        if comment["user"]["type"] == "Bot" and MARKER.match(comment["body"]):
-            return comment
-    return None
+    """Return the bot's newest summary comment on the pull request, or None."""
+    comments = summary_comments()
+    return comments[-1] if comments else None
 
 
 def changed_files():
@@ -584,14 +591,34 @@ def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
     return "\n\n".join(parts)
 
 
-def upsert_summary(sha, text):
-    """Upsert the summary comment, tagged with the commit the last finished review covered."""
-    body = f"<!-- kodi-review sha={sha} -->\n{text}"
-    comment = summary_comment()
-    if comment:
-        request("PATCH", f"/repos/{REPO}/issues/comments/{comment['id']}", {"body": body})
-    else:
-        request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments", {"body": body})
+def hide_summaries(comments):
+    """Hide each summary still shown as outdated, deleting any GitHub refuses to hide."""
+    try:
+        nodes = graphql(SHOWN_QUERY, ids=[c["node_id"] for c in comments])["nodes"]
+    except (RuntimeError, urllib.error.URLError) as err:
+        print(f"Could not check the earlier summaries: {err}")
+        return
+    hidden = {n["id"] for n in nodes if n and n.get("isMinimized")}
+    for comment in comments:
+        if comment["node_id"] in hidden:
+            continue
+        try:
+            graphql(HIDE_MUTATION, id=comment["node_id"])
+        except (RuntimeError, urllib.error.URLError) as err:
+            print(f"Could not hide summary {comment['id']}, deleting it: {err}")
+            try:
+                request("DELETE", f"/repos/{REPO}/issues/comments/{comment['id']}")
+            except urllib.error.URLError as refused:
+                print(f"Could not delete summary {comment['id']}: {refused}")
+
+
+def post_summary(sha, text, final=True):
+    """Post a summary tagged with the last reviewed commit; a finished review hides older ones."""
+    earlier = summary_comments() if final else []
+    request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments",
+            {"body": f"<!-- kodi-review sha={sha} -->\n{text}"})
+    if earlier:
+        hide_summaries(earlier)
 
 
 def fold_finding(note, body):
@@ -622,11 +649,11 @@ def cmd_post():
     head = os.environ["HEAD_SHA"]
     result = load_result()
     if result is None:
-        upsert_summary(reviewed_sha(),
-                       "The review did not finish, so nothing was posted. Re-run it.")
+        unfinished = "The review did not finish, so nothing was posted. Re-run it."
+        post_summary(reviewed_sha(), unfinished, final=False)
         return
     if result.get("withheld"):
-        upsert_summary(reviewed_sha(), WITHHELD)
+        post_summary(reviewed_sha(), WITHHELD, final=False)
         sys.exit(1)
     prior = load_prior()
     listed = {f.get("id") for f in prior if f.get("status", "open") == "open"}
@@ -645,7 +672,7 @@ def cmd_post():
     for comment in inline:
         comment["body"] = unlinked(comment["body"])
     if any(CREDENTIAL.search(text) for text in [summary] + [c["body"] for c in inline]):
-        upsert_summary(reviewed_sha(), WITHHELD)
+        post_summary(reviewed_sha(), WITHHELD, final=False)
         sys.exit(1)
     marked = mark_fixed(prior, fixed, head)
     if marked != len(fixed):
@@ -653,7 +680,7 @@ def cmd_post():
     if inline:
         request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/reviews",
                 {"commit_id": head, "event": "COMMENT", "comments": inline})
-    upsert_summary(head, summary)
+    post_summary(head, summary)
 
 
 def spoken(body):
