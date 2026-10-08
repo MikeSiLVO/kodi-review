@@ -58,6 +58,50 @@ class PatchTests(unittest.TestCase):
                                                 [changed("a.png", None, "2")]), ["a.png"])
 
 
+class ReferenceTests(unittest.TestCase):
+    """Kodi pull requests a description names, and the Kodi 22 copies, always from xbmc/xbmc."""
+
+    def test_releases_of_named_pull_requests(self):
+        """Merged pull requests get their releases; issues and unmerged ones are left out."""
+        refusals = []
+
+        def reply(method, path, body=None, raw=False):
+            """Answer as GitHub would for a merged PR, an open one, and an issue."""
+            number = path.rsplit("/", 1)[1]
+            if number == "29647":
+                refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
+                raise refusals[-1]
+            return {"title": f"PR {number}", "merge_commit_sha": "c" * 40,
+                    "merged_at": "2025-01-01T00:00:00Z" if number == "25630" else None}
+        releases = {"kodi21": {"compare": {"status": "DIVERGED"}},
+                    "kodi22": {"compare": {"status": "BEHIND"}}}
+        pr = {"title": "Fix #29647", "body": "Since #25630 and xbmc/xbmc#26000, see "
+              "https://github.com/xbmc/xbmc/pull/25630 too. Not #12 or a&#25631."}
+        try:
+            with mock.patch.object(review, "request", side_effect=reply) as request, \
+                    mock.patch.object(review, "graphql", return_value={"repository": releases}):
+                found = review.references(pr)
+        finally:
+            for err in refusals:
+                err.close()
+        self.assertEqual(found, [{"number": 25630, "title": "PR 25630", "kodi21": False,
+                                  "kodi22": True}])
+        self.assertEqual([c.args[1] for c in request.call_args_list],
+                         ["/repos/xbmc/xbmc/pulls/29647", "/repos/xbmc/xbmc/pulls/25630",
+                          "/repos/xbmc/xbmc/pulls/26000"])
+
+    def test_piers_copies_from_kodi(self):
+        """A fork's pull request still gets its Kodi 22 copies from xbmc/xbmc."""
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                mock.patch.object(review, "UPSTREAM", "fork/xbmc"), \
+                mock.patch.object(review, "changed_files",
+                                  return_value=[{"filename": "a.cpp", "status": "modified"}]), \
+                mock.patch.object(review, "request", return_value=b"x") as request:
+            review.cmd_piers()
+        self.assertEqual(request.call_args.args[1], "/repos/xbmc/xbmc/contents/a.cpp?ref=Piers")
+
+
 class LabelTests(unittest.TestCase):
     """The upstream mergeable rules."""
 

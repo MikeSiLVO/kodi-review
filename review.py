@@ -14,6 +14,7 @@ from typing import Any
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ.get("REVIEW_REPO") or os.environ.get("GITHUB_REPOSITORY", "")
 UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
+KODI = "xbmc/xbmc"
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 PIERS_FILE_LIMIT = 40
@@ -22,6 +23,10 @@ REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findi
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
 BACKPORT_OF = re.compile(r"backport(?:s| of)?\s+\S*?(?:#|/pull/)(\d+)", re.I)
 BACKPORT_TAG = re.compile(r"^\s*\[backport\]\s*", re.I)
+KODI_REF = re.compile(r"(?:github\.com/xbmc/xbmc/(?:pull|issues)/|\bxbmc/xbmc#|(?<![\w&/])#)"
+                      r"(\d{3,})\b")
+REFERENCE_LIMIT = 5
+CONTAINED = ("BEHIND", "IDENTICAL")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", re.M)
 NOT_BUILDS = {"CodeRabbit", "Mergeable"}
 BUILD_NAMES = {"default": "Jenkins"}
@@ -51,6 +56,9 @@ THREADS_QUERY = """query($owner: String!, $name: String!, $number: Int!, $after:
 SHOWN_QUERY = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on IssueComment { id isMinimized } } }"
 HIDE_MUTATION = """mutation($id: ID!) {
   minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }"""
+RELEASES_QUERY = """query($sha: String!) { repository(owner: "xbmc", name: "xbmc") {
+  kodi21: ref(qualifiedName: "refs/heads/Omega") { compare(headRef: $sha) { status } }
+  kodi22: ref(qualifiedName: "refs/heads/Piers") { compare(headRef: $sha) { status } } } }"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
 ACCEPTED_NOTE = "**Accepted by {}:** {}\n\n"
@@ -133,7 +141,7 @@ def cmd_piers():
     missing, skipped = [], []
     names = [f["filename"] for f in changed_files() if f["status"] != "added"]
     for name in names[:PIERS_FILE_LIMIT]:
-        url = f"/repos/{UPSTREAM}/contents/{urllib.parse.quote(name)}?ref=Piers"
+        url = f"/repos/{KODI}/contents/{urllib.parse.quote(name)}?ref=Piers"
         try:
             data = request("GET", url, raw=True)
         except urllib.error.HTTPError as err:
@@ -297,6 +305,24 @@ def backport_status(pr):
     return None
 
 
+def references(pr):
+    """List merged pull requests named in title or body and which of Kodi 21 and 22 have them."""
+    found = []
+    named = dict.fromkeys(KODI_REF.findall(f"{pr['title']}\n{pr['body'] or ''}"))
+    for number in list(named)[:REFERENCE_LIMIT]:
+        try:
+            ref = request("GET", f"/repos/{KODI}/pulls/{number}")
+        except urllib.error.HTTPError:
+            continue
+        if not ref.get("merged_at"):
+            continue
+        repo = graphql(RELEASES_QUERY, sha=ref["merge_commit_sha"])["repository"]
+        has = {kodi: ((repo[kodi] or {}).get("compare") or {}).get("status") in CONTAINED
+               for kodi in ("kodi21", "kodi22")}
+        found.append({"number": int(number), "title": ref["title"], **has})
+    return found
+
+
 def cmd_status():
     """Write where the upstream pull request stands to status.json, noting what was unavailable."""
     status, unavailable = {}, []
@@ -313,7 +339,7 @@ def cmd_status():
                   "milestone": milestone,
                   "label_problems": label_problems(pr["title"], labels, milestone)}
         for key, part in (("reviews", review_status), ("builds", build_status),
-                          ("backport", backport_status)):
+                          ("backport", backport_status), ("references", references)):
             try:
                 status[key] = part(pr)
             except Exception:
