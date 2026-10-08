@@ -573,7 +573,8 @@ def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
     parts.append("---")
     lines = status_lines(status, result)
     parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
-    footer = f"Reviewed up to {head[:12]}{' (new commits only)' if rerun else ''}."
+    scope = " (changes since the last review only)" if rerun else ""
+    footer = f"Reviewed up to {head[:12]}{scope}."
     if fixed:
         footer += f" {fixed} earlier finding{'s' if fixed != 1 else ''} fixed."
     if still_open:

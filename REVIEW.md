@@ -14,7 +14,8 @@ These files in `.kodi-review-run/` were prepared for you:
 
 - `pr.json`: the title, description, author and target branch.
 - `full.diff`: the whole change.
-- `new.diff`: only on a re-review. Review just these changes and use `full.diff` for context.
+- `new.diff`: only on a re-review, what changed since your last review. Review just these changes
+  and use `full.diff` for context. When it is empty, the code has not changed.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
 - `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports.
 - `original.diff`: only for a Piers backport whose master original was found: that change.
