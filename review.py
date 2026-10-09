@@ -78,6 +78,7 @@ NO_ANSWER = "I could not finish an answer. Ask again."
 RESOLVE_NOTE = "I can't resolve threads, so this one is yours to close."
 BOT_LOGIN = "kodi-review[bot]"
 RECHECK_LIMIT = 5
+KODI22_LINE = re.compile(r"^- \*\*Kodi 22:\*\* (.+)$", re.M)
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
@@ -379,6 +380,13 @@ def references(pr):
     return found
 
 
+def earlier_kodi22():
+    """Return the Kodi 22 answer and reason from the bot's last summary, or None."""
+    comment = summary_comment()
+    match = KODI22_LINE.search(comment["body"]) if comment else None
+    return match.group(1) if match else None
+
+
 def cmd_status():
     """Write where the upstream pull request stands to status.json, noting what was unavailable."""
     status, unavailable = {}, []
@@ -400,6 +408,13 @@ def cmd_status():
                 status[key] = part(pr)
             except Exception:
                 unavailable.append(key)
+    try:
+        before = earlier_kodi22()
+    except Exception:
+        before = None
+        unavailable.append("earlier summary")
+    if before:
+        status["kodi22_before"] = before
     status["unavailable"] = unavailable
     RUN_DIR.mkdir(exist_ok=True)
     (RUN_DIR / "status.json").write_text(json.dumps(status, indent=1) + "\n")

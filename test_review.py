@@ -1060,3 +1060,11 @@ class FollowUpTests(unittest.TestCase):
                                                      "RESULT": json.dumps(result)}):
                     review.cmd_reply()
                 self.assertEqual([c.args for c in req.call_args_list], expected)
+
+    def test_earlier_kodi22_comes_from_the_last_summary(self):
+        """A re-review gets the last summary's Kodi 22 line; a first review gets none."""
+        body = "### Ready\n\n- **Kodi 22:** No. Lacks PR 1.\n- **Next:** x"
+        with mock.patch.object(review, "summary_comment", return_value={"body": body}):
+            self.assertEqual(review.earlier_kodi22(), "No. Lacks PR 1.")
+        with mock.patch.object(review, "summary_comment", return_value=None):
+            self.assertIsNone(review.earlier_kodi22())

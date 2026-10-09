@@ -165,7 +165,10 @@ One finding per root cause: report it once and list the other places in `problem
   Kodi 22 lacks; `Backport already open` when the description or `status.json` says so. A fix for
   a regression from a change Kodi 22 has and Kodi 21 lacks (`references` in `status.json`) is
   never `No`, since 22.0 would ship the regression; the same size and path test picks `Yes, for
-  22.0` or `Later, for 22.x`. Confirm in the code that the fix targets that change. For a pull
+  22.0` or `Later, for 22.x`. Confirm in the code that the fix targets that change. A `Backport:
+  Needed` label in `status.json` is the team's call that Kodi 22 needs it, so never answer `No`
+  then. On a re-review, `kodi22_before` in `status.json` is your earlier answer and reason; keep
+  it unless the new changes alter the fact it rests on, and then name that fact. For a pull
   request that targets `Piers`, judge that backport itself.
 - `kodi22_reason`: one sentence naming the fact that decided it.
 - `next_step`: one sentence on who does what next.
