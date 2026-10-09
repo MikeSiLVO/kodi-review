@@ -17,7 +17,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install pyright
+      - run: pip install pyright==1.1.411 ruff==0.16.6
       - run: python -m unittest -v test_review
+      - run: ruff check .
       - run: pyright review.py test_review.py
       - run: node --test relay/worker.test.mjs

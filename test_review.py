@@ -163,7 +163,6 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(review.verdict_line(dict(result, findings=findings), {}),
                          "Needs more work · 3 problems (1 Serious, 2 Minor)")
 
-
     def test_quiet_lines_skipped(self):
         """Reviews, conflicts and labels with nothing to say have their lines skipped."""
         status = {"base": "master", "conflicts": False, "label_problems": [], "reviews": [],
@@ -318,7 +317,7 @@ class UnlinkedTests(unittest.TestCase):
     def test_mention_outside_code(self):
         """A mention gets a zero-width space; code, emails and paths keep their @."""
         self.assertEqual(review.unlinked("Ask @fuzzard, not `@code`, a@b.com or x/@y"),
-                         "Ask @​fuzzard, not `@code`, a@b.com or x/@y")
+                         "Ask @\u200bfuzzard, not `@code`, a@b.com or x/@y")
 
     def test_upstream_links_and_refs(self):
         """Upstream links and owner/repo references become upstream PR and issue numbers."""
@@ -359,7 +358,7 @@ class UnlinkedTests(unittest.TestCase):
             review.cmd_post()
         line_comment = request.call_args_list[0].args[2]["comments"][0]["body"]
         summary = request.call_args_list[1].args[2]["body"]
-        self.assertIn("Ask @​a.", line_comment)
+        self.assertIn("Ask @\u200ba.", line_comment)
         self.assertIn("See PR 12345.", line_comment)
         self.assertIn("Since upstream PR 24720.", summary)
 

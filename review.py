@@ -489,7 +489,7 @@ def unlinked(text):
         part = REPO_LINK.sub(lambda m: repo_number(m[1], m[2], m[3]), parts[i])
         part = REPO_REF.sub(lambda m: repo_number(m[1], "pull", m[2]), part)
         part = BARE_REF.sub(r"PR \1", part)
-        parts[i] = MENTION.sub("@​", part)
+        parts[i] = MENTION.sub("@\u200b", part)
     return "".join(parts)
 
 
