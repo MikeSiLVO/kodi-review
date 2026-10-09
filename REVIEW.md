@@ -15,7 +15,9 @@ These files in `.kodi-review-run/` were prepared for you:
 - `pr.json`: the title, description, author and target branch.
 - `full.diff`: the whole change.
 - `new.diff`: only on a re-review, what changed since your last review. Review just these changes
-  and use `full.diff` for context. When it is empty, the code has not changed.
+  and use `full.diff` for context. When it is empty, the code has not changed. A change that
+  fixes one of your findings gets every check new code gets, the description's promises
+  included, even when it is the fix you suggested.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
 - `callers.txt`: for each function the diff touches, the lines in the tree that name it, or a
   count when there are too many to list.
@@ -54,6 +56,10 @@ Test what the pull request says it does: for each behavior the title and descrip
 pick one concrete input that exercises it (a size, a value, a user action) and trace it through
 the changed code. A promise the code does not keep is a finding.
 
+Test the edges of every condition the change adds or alters: pick one input just outside the
+case the change targets (another layout, mode, setting, platform or caller) and trace it. A
+result that changes there is a finding unless the description says it should.
+
 Never report:
 - behavior that the description, a code comment or the surrounding feature shows is intentional
 - style, formatting or line length (clang-format and Jenkins handle it), refactors, shared helpers
@@ -81,8 +87,8 @@ survives.
   docs in the tree. Never infer behavior from a name.
 - You have no network access. Never claim from memory that a tag, version, release or commit
   exists or does not; only the tree and the files prepared for you count.
-- A suggested fix must change the outcome, keep earlier fixes working, and compile against the
-  real signatures.
+- A suggested fix must change the outcome, keep earlier fixes working, compile against the real
+  signatures, and leave every input outside the bug's case behaving as before.
 - If you cannot prove it from the code, drop it.
 
 ## Facts earlier AI reviewers got wrong about Kodi
