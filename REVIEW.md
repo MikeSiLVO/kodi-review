@@ -47,6 +47,10 @@ Look past the diff for one thing: when the change alters what a function, field,
 means, search for other callers, entry points (JSON-RPC, UPnP, Python, skins) and sibling code
 that still assume the old meaning. Name the one that breaks.
 
+Test what the pull request says it does: for each behavior the title and description promise,
+pick one concrete input that exercises it (a size, a value, a user action) and trace it through
+the changed code. A promise the code does not keep is a finding.
+
 Never report:
 - behavior that the description, a code comment or the surrounding feature shows is intentional
 - style, formatting or line length (clang-format and Jenkins handle it), refactors, shared helpers
