@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -870,6 +871,47 @@ class PreloadTests(unittest.TestCase):
                 mock.patch("builtins.print") as printed:
             review.cmd_preload()
         printed.assert_not_called()
+
+
+class CallersTests(unittest.TestCase):
+    """Uses of the functions a change touches, listed before the review."""
+
+    DIFF = ("diff --git a/xbmc/A.cpp b/xbmc/A.cpp\n--- a/xbmc/A.cpp\n+++ b/xbmc/A.cpp\n"
+            "@@ -10,3 +10,4 @@ bool CA::Load(int x)\n x\n+y\n"
+            "@@ -40,2 +41,4 @@ TEST_F(ATest, Load)\n+void CA::Reset()\n+{\n"
+            "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n"
+            "@@ -1,1 +1,2 @@ void Docs()\n+text\n")
+
+    def test_functions_come_from_hunks_and_definitions(self):
+        """Functions come from hunk headers and qualified definitions, not macros or other files."""
+        self.assertEqual(review.changed_functions(self.DIFF), ["Load", "Reset"])
+
+    def test_too_many_uses_become_a_count(self):
+        """A function used too often gets a count instead of its lines."""
+        found = {"Load": ["a.cpp:1:  Load(1);"], "Reset": ["x"] * (review.CALLER_LIMIT + 1)}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "full.diff").write_text(self.DIFF)
+            with mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                    mock.patch.object(review, "uses", side_effect=found.get):
+                review.cmd_callers()
+            text = (Path(tmp) / "callers.txt").read_text()
+        self.assertEqual(text, "Load:\na.cpp:1: Load(1);\n\n"
+                               f"Reset: {review.CALLER_LIMIT + 1} uses, too many to list\n")
+
+    def test_uses_searches_tracked_sources_by_whole_word(self):
+        """Only tracked source files count, and a longer name does not match."""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a.cpp").write_text("Load(1);\nLoader x;\n")
+            Path(tmp, "b.md").write_text("Load\n")
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+            here = os.getcwd()
+            os.chdir(tmp)
+            try:
+                found = review.uses("Load")
+            finally:
+                os.chdir(here)
+        self.assertEqual(found, ["a.cpp:1:Load(1);"])
 
 
 class RenderCommandTests(unittest.TestCase):

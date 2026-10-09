@@ -196,6 +196,7 @@ jobs:
             echo "schema=$(jq -c . "$BOT/answer.json")" >> "$GITHUB_OUTPUT"
             echo "task=Answer the question in question.md about" >> "$GITHUB_OUTPUT"
           else
+            python3 "$BOT/review.py" callers || echo "Callers unavailable"
             cp "$BOT/REVIEW.md" "$RUNNER_TEMP/instructions.md"
             echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
             echo "task=Review" >> "$GITHUB_OUTPUT"

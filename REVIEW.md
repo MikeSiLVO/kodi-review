@@ -17,6 +17,8 @@ These files in `.kodi-review-run/` were prepared for you:
 - `new.diff`: only on a re-review, what changed since your last review. Review just these changes
   and use `full.diff` for context. When it is empty, the code has not changed.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
+- `callers.txt`: for each function the diff touches, the lines in the tree that name it, or a
+  count when there are too many to list.
 - `status.json`: where it stands on GitHub: reviews, test builds, conflicts, labels, backports,
   and `references`, the merged pull requests the title or description names with whether Kodi
   21 and 22 have each.

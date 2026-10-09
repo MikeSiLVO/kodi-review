@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -18,6 +19,13 @@ KODI = "xbmc/xbmc"
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 PIERS_FILE_LIMIT = 40
+SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
+SECTION = re.compile(r"^diff --git a/\S+ b/(\S+)$", re.M)
+HUNK_FUNCTION = re.compile(r"^@@ [^@\n]* @@ [^(\n]*?(\w+)\s*\(", re.M)
+DEFINITION = re.compile(r"^[+-][A-Za-z_][^(;\n]*\b\w+::(~?\w+)\s*\(", re.M)
+NOT_FUNCTIONS = {"if", "for", "while", "switch", "return", "sizeof", "catch"}
+CALLER_LIMIT = 25
+CALLERS_LINE_LIMIT = 150
 DISCUSSION_LIMIT = 25_000
 REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
@@ -69,7 +77,7 @@ NO_ANSWER = "I could not finish an answer. Ask again."
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
-             "original.diff", "new.diff", "full.diff")
+             "callers.txt", "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
@@ -153,6 +161,50 @@ def cmd_piers():
     skipped += names[PIERS_FILE_LIMIT:]
     lines = [f"Not in Kodi 22: {n}" for n in missing] + [f"Not fetched: {n}" for n in skipped]
     (RUN_DIR / "piers.txt").write_text("\n".join(lines) + "\n" if lines else "")
+
+
+def changed_functions(diff):
+    """Return the functions the diff's source-file hunks sit in or define."""
+    names = []
+    for start, end, path in diff_sections(diff):
+        if not any(Path(path).match(glob) for glob in SOURCES):
+            continue
+        text = diff[start:end]
+        for match in [*HUNK_FUNCTION.finditer(text), *DEFINITION.finditer(text)]:
+            name = match.group(1).lstrip("~")
+            if name not in names and name not in NOT_FUNCTIONS and not name.isupper():
+                names.append(name)
+    return names
+
+
+def diff_sections(diff):
+    """Yield each file section of a diff as its start, end and new path."""
+    heads = list(SECTION.finditer(diff))
+    for head, after in zip(heads, [*heads[1:], None], strict=True):
+        yield head.start(), after.start() if after else len(diff), head.group(1)
+
+
+def uses(name):
+    """Return the tree's source lines naming a function, as path:line:text."""
+    found = subprocess.run(["git", "grep", "-n", "-I", "-w", "-e", name, "--", *SOURCES],
+                           capture_output=True, text=True, errors="replace", check=False)
+    return found.stdout.splitlines()
+
+
+def cmd_callers():
+    """Write each touched function's uses to callers.txt, a count when too many, capped overall."""
+    diff = (RUN_DIR / "full.diff").read_text(errors="replace")
+    lines = []
+    for name in changed_functions(diff):
+        if len(lines) >= CALLERS_LINE_LIMIT:
+            lines.append("More functions not listed.")
+            break
+        found = uses(name)
+        if len(found) > CALLER_LIMIT:
+            lines += [f"{name}: {len(found)} uses, too many to list", ""]
+        elif found:
+            lines += [f"{name}:", *(" ".join(line.split())[:200] for line in found), ""]
+    (RUN_DIR / "callers.txt").write_text("\n".join(lines).rstrip() + "\n" if lines else "")
 
 
 def trimmed_body(body):
@@ -918,7 +970,7 @@ def cmd_usage():
 
 
 COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers,
-            "status": cmd_status,
+            "callers": cmd_callers, "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
             "preload": cmd_preload, "keep": cmd_keep,
