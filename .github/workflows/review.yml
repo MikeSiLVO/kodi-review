@@ -215,8 +215,8 @@ jobs:
           for deb in "$BOT"/vendor/*.deb; do sudo dpkg-deb -x "$deb" /; done
           bwrap --version && socat -V > /dev/null || {
             echo "::warning::The pinned packages did not run; fetching them from Ubuntu"
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends bubblewrap socat
+            sudo timeout 120 apt-get update -qq
+            sudo timeout 300 apt-get install -y --no-install-recommends bubblewrap socat
           }
 
       - name: Wait for the check on the comment that asked
