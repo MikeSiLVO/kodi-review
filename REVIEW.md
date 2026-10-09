@@ -153,15 +153,16 @@ One finding per root cause: report it once and list the other places in `problem
 - `verdict`: judged on the code, its description and `status.json`. "Ready to merge" only when
   you read the whole change. If part of it was too large or generated to check, say what you
   skipped in `summary` and do not use "Ready to merge".
-- `kodi22`: `Yes, for 22.0` for a small, safe fix to a bug that the `piers/` copy also has;
-  `Later, for 22.x` for a worthwhile fix that should prove itself on master first; `No` for
-  features, cleanups, risky changes or code Kodi 22 lacks; `Backport already open` when the
-  description or `status.json` says so. A fix for a regression from a change Kodi 22 has and
-  Kodi 21 lacks (`references` in `status.json`) is never `No`, since 22.0 would ship the
-  regression: `Yes, for 22.0` when small and safe, else `Later, for 22.x`. Confirm in the code
-  that the fix targets that change. For a pull request that targets `Piers`, judge that backport
-  itself.
-- `kodi22_reason`: one sentence.
+- `kodi22`: decided by the code, never by how the author says it was tested. `Yes, for 22.0`
+  for a fix to a bug the `piers/` copy also has that is small and changes only the bug's own
+  path; `Later, for 22.x` for a worthwhile fix that also changes code other features rely on, so
+  it should prove itself on master first; `No` for features, cleanups, risky changes or code
+  Kodi 22 lacks; `Backport already open` when the description or `status.json` says so. A fix for
+  a regression from a change Kodi 22 has and Kodi 21 lacks (`references` in `status.json`) is
+  never `No`, since 22.0 would ship the regression; the same size and path test picks `Yes, for
+  22.0` or `Later, for 22.x`. Confirm in the code that the fix targets that change. For a pull
+  request that targets `Piers`, judge that backport itself.
+- `kodi22_reason`: one sentence naming the fact that decided it.
 - `next_step`: one sentence on who does what next.
 - `fixed`: the `id` of each open `prior.json` finding the code at head no longer has. Check each
   one in the code; leave it out when unsure.
