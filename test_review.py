@@ -404,7 +404,9 @@ class DiscussionTests(unittest.TestCase):
             self.comment(2, "rabbit", "Bot", "2026-01-02T00:00:00Z",
                          "Old.\n\n✅ Addressed in commit abc", "a.cpp"),
             self.comment(3, review.BOT_LOGIN, "Bot", "2026-01-03T00:00:00Z", "**Minor: Ours**",
-                         "a.cpp")]
+                         "a.cpp"),
+            self.comment(4, "rabbit", "Bot", "2026-01-04T00:00:00Z",
+                         "Old.\n\n✅ Confirmed as addressed by @dev", "a.cpp")]
         self.assertEqual(review.discussion_text(comments),
                          f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
 

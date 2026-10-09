@@ -82,6 +82,7 @@ KODI22_LINE = re.compile(r"^- \*\*Kodi 22:\*\* (.+)$", re.M)
 INNER_DETAILS = re.compile(r"<details>(?:(?!<details>).)*?</details>", re.S)
 HTML_TAG = re.compile(r"<[^>]+>")
 CLAIM_LIMIT = 1500
+ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
 CLAIM_LABEL = " (another reviewer's claim to check)"
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
@@ -429,7 +430,7 @@ def other_claim(comment):
     user = comment.get("user") or {}
     return (user.get("type") == "Bot" and user.get("login") != BOT_LOGIN
             and bool(comment.get("path")) and not comment.get("in_reply_to_id")
-            and "Addressed in commit" not in (comment.get("body") or ""))
+            and not ADDRESSED.search(comment.get("body") or ""))
 
 
 def claim_text(body):
