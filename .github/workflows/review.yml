@@ -35,6 +35,10 @@ on:
         description: "Set by the relay: answer runs each get their own queue, reviews share one"
         required: false
         type: string
+      source:
+        description: "Set by the relay: mention, reply (in a finding's thread) or push"
+        required: false
+        type: string
 
 concurrency:
   group: >-
@@ -50,11 +54,13 @@ env:
   REPLAY_SHA: ${{ inputs.sha }}
   COMMENT: ${{ inputs.comment }}
   MODE: ${{ inputs.mode || 'review' }}
+  SOURCE: ${{ inputs.source }}
   ALLOWED_REPOS: xbmc/xbmc MikeSiLVO/xbmc
 
 jobs:
   trigger:
-    if: github.repository_owner == 'MikeSiLVO' && inputs.comment != ''
+    if: >-
+      github.repository_owner == 'MikeSiLVO' && (inputs.comment != '' || inputs.source == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -84,7 +90,7 @@ jobs:
           repositories: ${{ steps.target.outputs.name }}
           permission-pull-requests: write
 
-      - name: Check the comment that asked for the bot
+      - name: Check that this run was asked for
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: python3 bot/review.py trigger
@@ -220,8 +226,8 @@ jobs:
             sudo timeout 300 apt-get install -y --no-install-recommends bubblewrap socat
           }
 
-      - name: Wait for the check on the comment that asked
-        if: inputs.comment != ''
+      - name: Wait for the trigger check
+        if: inputs.comment != '' || inputs.source == 'push'
         run: |
           jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
           for _ in $(seq 120); do
@@ -229,7 +235,7 @@ jobs:
               | "\(.status) \(.conclusion)"')
             case "$state" in
               "completed success") exit 0 ;;
-              completed*) echo "The comment did not pass the check: $state"; exit 1 ;;
+              completed*) echo "The trigger check did not pass: $state"; exit 1 ;;
             esac
             sleep 2
           done
@@ -300,7 +306,7 @@ jobs:
     needs: [trigger, review]
     if: >-
       ${{ !cancelled() && needs.review.outputs.prepared == 'true'
-      && (inputs.comment == '' || needs.trigger.result == 'success') }}
+      && (inputs.comment == '' && inputs.source != 'push' || needs.trigger.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+from datetime import datetime, timezone
 from email.message import Message
 from pathlib import Path
 from unittest import mock
@@ -745,8 +746,9 @@ class AnswerTests(unittest.TestCase):
                                              "withdraw": "Freed later."})
         repo = review.REPO
         self.assertIsNone(code)
+        body = f"Agreed, @\u200bdev frees it.\n\n{review.RESOLVE_NOTE}"
         self.assertEqual(calls[0], ("POST", f"/repos/{repo}/pulls/7/comments/3/replies",
-                                    {"body": "Agreed, @\u200bdev frees it."}))
+                                    {"body": body}))
         self.assertEqual(calls[-1], ("PATCH", f"/repos/{repo}/pulls/comments/1",
                                      {"body": "**Withdrawn:** Freed later.\n\n**Minor: Leak**"
                                               "\n\n<details><summary>Details</summary>\n\n"
@@ -977,3 +979,84 @@ class WithheldTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FollowUpTests(unittest.TestCase):
+    """Runs started by a push after open findings or by a reply in a finding's thread."""
+
+    def thread(self, *logins, tid="T1"):
+        """Return a thread whose first comment is an open finding of the bot."""
+        return {"id": tid, "isResolved": False, "path": "a.cpp", "line": 3,
+                "comments": {"nodes": [
+                    {"databaseId": 11, "body": "**Minor: Found**",
+                     "author": {"login": login,
+                                "__typename": "Bot" if login == "kodi-review" else "User"}}
+                    for login in logins]}}
+
+    def test_findings_note_a_reply(self):
+        """A finding records whether a person replied under it."""
+        found = review.earlier_findings([self.thread("kodi-review"),
+                                         self.thread("kodi-review", "dev", tid="T2")])
+        self.assertEqual([f["replied"] for f in found], [False, True])
+
+    def test_fixed_finding_with_a_reply_gets_one(self):
+        """Marking a finding fixed replies in its thread only when a person replied there."""
+        prior = [{"id": "T1", "comment": 11, "replied": True},
+                 {"id": "T2", "comment": 12, "replied": False}]
+        with mock.patch.object(review, "request", return_value={"body": "**Minor: A**"}) as req, \
+                mock.patch.dict(os.environ, {"FORK_PR": "7"}):
+            self.assertEqual(review.mark_fixed(prior, ["T1", "T2"], "b" * 40), 2)
+        posts = [c.args for c in req.call_args_list if c.args[0] == "POST"]
+        self.assertEqual(posts, [("POST", f"/repos/{review.REPO}/pulls/7/comments/11/replies",
+                                  {"body": f"Fixed in `{'b' * 12}`. {review.RESOLVE_NOTE}"})])
+
+    def test_push_recheck_needs_an_open_finding_and_room(self):
+        """A push rechecks only with an open finding and under the daily limit."""
+        busy = [{"created_at": datetime.now(timezone.utc).isoformat()}] * review.RECHECK_LIMIT
+        cases = [([], [], True), ([self.thread("kodi-review")], busy, True),
+                 ([self.thread("kodi-review")], [], False)]
+        for threads, summaries, stops in cases:
+            with mock.patch.object(review, "review_threads", return_value=threads), \
+                    mock.patch.object(review, "summary_comments", return_value=summaries), \
+                    mock.patch.dict(os.environ, {"SOURCE": "push"}):
+                if stops:
+                    self.assertRaises(SystemExit, review.cmd_trigger)
+                else:
+                    review.cmd_trigger()
+
+    def test_reply_needs_an_open_finding_above_it_and_gets_no_reaction(self):
+        """A writer's reply to the bot's open finding starts a run; other replies do not."""
+        reply = {"body": "Agreed.", "in_reply_to_id": 4, "user": {"login": "dev"},
+                 "pull_request_url": "https://api.github.com/repos/o/r/pulls/7"}
+        env = {"COMMENT": "review/6", "FORK_PR": "7", "MODE": "answer", "SOURCE": "reply"}
+        for login, starts in [("kodi-review[bot]", True), ("dev", False)]:
+            parent = {"user": {"login": login}, "body": "**Minor: A**"}
+            calls = []
+
+            def fake(method, path, body=None, raw=False, parent=parent, calls=calls):
+                """Reply like GitHub for the reply, its parent and the writer's access."""
+                calls.append(method)
+                if path.endswith("/permission"):
+                    return {"permission": "write"}
+                return parent if path.endswith("/comments/4") else reply
+            with mock.patch.object(review, "request", side_effect=fake), \
+                    mock.patch.dict(os.environ, env):
+                if starts:
+                    review.cmd_trigger()
+                    self.assertNotIn("POST", calls)
+                else:
+                    self.assertRaises(SystemExit, review.cmd_trigger)
+
+    def test_acknowledgement_gets_a_thumbs_up_and_a_failure_stays_quiet(self):
+        """An acknowledged reply gets a thumbs-up and no text; an unfinished run posts nothing."""
+        thumbs = ("POST", f"/repos/{review.REPO}/pulls/comments/6/reactions", {"content": "+1"})
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "question.json").write_text(
+                json.dumps({"kind": "review", "comment": 6, "finding": 4}))
+            for result, expected in [({"reply": "", "acknowledge": True}, [thumbs]), (None, [])]:
+                with mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                        mock.patch.object(review, "request") as req, \
+                        mock.patch.dict(os.environ, {"FORK_PR": "7", "SOURCE": "reply",
+                                                     "RESULT": json.dumps(result)}):
+                    review.cmd_reply()
+                self.assertEqual([c.args for c in req.call_args_list], expected)

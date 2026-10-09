@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import worker, { trigger, verify } from "./worker.mjs";
+import worker, { followUp, trigger, verify } from "./worker.mjs";
 
 const REPOS = ["xbmc/xbmc", "MikeSiLVO/xbmc"];
 const ENV = { WEBHOOK_SECRET: "s3cret", DISPATCH_TOKEN: "t", BOT_REPO: "MikeSiLVO/kodi-review",
@@ -22,7 +22,7 @@ function sign(body, secret = ENV.WEBHOOK_SECRET) {
 
 test("a mention on an open pull request asks for a review", () => {
   assert.deepEqual(trigger("issue_comment", issueComment(), REPOS),
-    { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review" });
+    { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review", source: "mention" });
 });
 
 test("review or nothing after the mention asks for a review; other words ask a question", () => {
@@ -42,7 +42,7 @@ test("a mention in a line comment names the review comment", () => {
     comment: { id: 5, body: "@kodi-review why?", author_association: "MEMBER",
       user: { type: "User" } } };
   assert.deepEqual(trigger("pull_request_review_comment", payload, REPOS),
-    { pr: "8", repo: "xbmc/xbmc", comment: "review/5", mode: "answer" });
+    { pr: "8", repo: "xbmc/xbmc", comment: "review/5", mode: "answer", source: "mention" });
 });
 
 test("everything else is ignored", () => {
@@ -87,7 +87,8 @@ test("a signed mention dispatches the review workflow", async (t) => {
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /MikeSiLVO\/kodi-review\/actions\/workflows\/review\.yml/);
   assert.deepEqual(JSON.parse(calls[0].init.body),
-    { ref: "main", inputs: { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review" } });
+    { ref: "main", inputs: { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review",
+      source: "mention" } });
 });
 
 test("an unsigned request is refused without dispatching", async (t) => {
@@ -96,4 +97,64 @@ test("an unsigned request is refused without dispatching", async (t) => {
     body: "{}", headers: { "x-github-event": "issue_comment" } });
   assert.equal((await worker.fetch(request, ENV)).status, 401);
   assert.equal(fetched.mock.callCount(), 0);
+});
+
+/** Return a summary comment by the bot under the given heading. */
+function summary(head) {
+  return { user: { login: "kodi-review[bot]" },
+    body: `<!-- kodi-review sha=${"a".repeat(40)} -->\n### ${head}\nWhy.` };
+}
+
+/** Return a lookup that answers each API path from a table, null for the rest. */
+function lookup(table) {
+  return async (path) => table[path] ?? null;
+}
+
+/** Return a reply to review comment 4 on pull request 8 by a member. */
+function threadReply(changes = {}) {
+  return { action: "created", repository: { full_name: "xbmc/xbmc" },
+    pull_request: { number: 8, state: "open" },
+    comment: { id: 6, in_reply_to_id: 4, body: "Agreed, thanks.", author_association: "MEMBER",
+      user: { type: "User" } }, ...changes };
+}
+
+test("a push after a summary with open problems asks for a recheck", async () => {
+  const push = { action: "synchronize", repository: { full_name: "xbmc/xbmc" },
+    pull_request: { number: 8, state: "open" } };
+  const path = "/repos/xbmc/xbmc/issues/8/comments?per_page=100&page=1";
+  const open = lookup({ [path]: [summary("Ready to merge"),
+    summary("Merge after small fixes · 1 problem (Moderate)")] });
+  assert.deepEqual(await followUp("pull_request", push, REPOS, open),
+    { pr: "8", repo: "xbmc/xbmc", comment: "", mode: "review", source: "push" });
+  const clean = lookup({ [path]: [summary("Merge after small fixes · 1 problem (Moderate)"),
+    summary("Ready to merge")] });
+  assert.equal(await followUp("pull_request", push, REPOS, clean), null);
+  assert.equal(await followUp("pull_request", push, REPOS, lookup({ [path]: [] })), null);
+  assert.equal(await followUp("pull_request", { ...push, action: "opened" }, REPOS, open), null);
+});
+
+test("a member's reply in an open finding's thread asks for an answer", async () => {
+  const finding = { user: { login: "kodi-review[bot]" }, body: "**Moderate: Leak**\n\nDetail." };
+  const get = lookup({ "/repos/xbmc/xbmc/pulls/comments/4": finding });
+  assert.deepEqual(await followUp("pull_request_review_comment", threadReply(), REPOS, get),
+    { pr: "8", repo: "xbmc/xbmc", comment: "review/6", mode: "answer", source: "reply" });
+});
+
+test("replies elsewhere, by strangers or bots, or to settled findings are ignored", async () => {
+  const base = threadReply();
+  const finding = { user: { login: "kodi-review[bot]" }, body: "**Minor: Typo**" };
+  const get = lookup({ "/repos/xbmc/xbmc/pulls/comments/4": finding });
+  const ignored = [threadReply({ comment: { ...base.comment, in_reply_to_id: undefined } }),
+    threadReply({ comment: { ...base.comment, author_association: "NONE" } }),
+    threadReply({ comment: { ...base.comment, user: { type: "Bot" } } }),
+    threadReply({ action: "edited" }),
+    threadReply({ pull_request: { number: 8, state: "closed" } })];
+  for (const payload of ignored) {
+    assert.equal(await followUp("pull_request_review_comment", payload, REPOS, get), null);
+  }
+  for (const parent of [{ user: { login: "coderabbitai[bot]" }, body: "**Minor: x**" },
+    { user: { login: "kodi-review[bot]" }, body: "**Fixed in `abc`.**\n\n**Minor: x**" }]) {
+    const other = lookup({ "/repos/xbmc/xbmc/pulls/comments/4": parent });
+    assert.equal(await followUp("pull_request_review_comment", base, REPOS, other), null);
+  }
 });

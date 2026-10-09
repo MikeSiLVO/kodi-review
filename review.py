@@ -9,6 +9,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,9 @@ SETTLED = re.compile(r"^\*\*(Fixed in|Withdrawn:|Accepted by)[^\n]*\n\n"
                      r"(\*\*(?:Serious|Moderate|Minor)\b.*)")
 SETTLED_STATUS = {"Fixed in": "fixed", "Withdrawn:": "withdrawn", "Accepted by": "accepted"}
 NO_ANSWER = "I could not finish an answer. Ask again."
+RESOLVE_NOTE = "I can't resolve threads, so this one is yours to close."
+BOT_LOGIN = "kodi-review[bot]"
+RECHECK_LIMIT = 5
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
@@ -465,7 +469,7 @@ def graphql(query, **variables):
 
 
 def earlier_findings(threads):
-    """Return the bot's findings, each open or settled, with its first line."""
+    """Return the bot's findings, open or settled, with first lines and whether a person replied."""
     found = []
     for t in threads:
         comments = t["comments"]["nodes"]
@@ -479,13 +483,15 @@ def earlier_findings(threads):
             status, finding = "resolved" if t["isResolved"] else "open", body.split("\n", 1)[0]
         else:
             continue
+        replied = any((c["author"] or {}).get("__typename") == "User" for c in comments[1:])
         found.append({"id": t["id"], "comment": comments[0].get("databaseId"), "path": t["path"],
-                      "line": t["line"], "status": status, "finding": finding[:160]})
+                      "line": t["line"], "status": status, "finding": finding[:160],
+                      "replied": replied})
     return found
 
 
-def cmd_prior():
-    """Write the bot's findings on the pull request, open and settled, to prior.json."""
+def review_threads():
+    """Return the pull request's review threads with their comments."""
     owner, name = REPO.split("/")
     threads, after = [], None
     while True:
@@ -494,10 +500,15 @@ def cmd_prior():
         page = data["repository"]["pullRequest"]["reviewThreads"]
         threads += page["nodes"]
         if not page["pageInfo"]["hasNextPage"]:
-            break
+            return threads
         after = page["pageInfo"]["endCursor"]
+
+
+def cmd_prior():
+    """Write the bot's findings on the pull request, open and settled, to prior.json."""
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "prior.json").write_text(json.dumps(earlier_findings(threads), indent=1) + "\n")
+    (RUN_DIR / "prior.json").write_text(
+        json.dumps(earlier_findings(review_threads()), indent=1) + "\n")
 
 
 def load_prior():
@@ -708,15 +719,20 @@ def fold_finding(note, body):
 
 
 def mark_fixed(prior, ids, head):
-    """Mark each fixed finding with its fixing commit and fold its detail; return the count."""
-    comments = {f.get("id"): f.get("comment") for f in prior}
+    """Mark each fixed finding with its commit, telling anyone who replied; return the count."""
+    findings = {f.get("id"): f for f in prior}
     marked = 0
     for tid in ids:
-        path = f"/repos/{REPO}/pulls/comments/{comments.get(tid)}"
+        finding = findings.get(tid) or {}
+        path = f"/repos/{REPO}/pulls/comments/{finding.get('comment')}"
         try:
             body = request("GET", path)["body"]
             request("PATCH", path, {"body": fold_finding(FIXED_NOTE.format(head[:12]), body)})
             marked += 1
+            if finding.get("replied"):
+                request("POST", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}/comments/"
+                        f"{finding.get('comment')}/replies",
+                        {"body": f"Fixed in `{head[:12]}`. {RESOLVE_NOTE}"})
         except (urllib.error.URLError, KeyError, TypeError) as err:
             print(f"Could not mark {tid} fixed: {err}")
     return marked
@@ -784,16 +800,43 @@ def fetch_comment(path):
         sys.exit("The comment that asked for this run has been deleted.")
 
 
+def check_recheck():
+    """Check a push may recheck: exit 1 without open findings or at the daily review limit."""
+    if not any(f["status"] == "open" for f in earlier_findings(review_threads())):
+        sys.exit("No open findings on this pull request, so a push needs no recheck.")
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    recent = [c for c in summary_comments()
+              if datetime.fromisoformat(c["created_at"].replace("Z", "+00:00")) > since]
+    if len(recent) >= RECHECK_LIMIT:
+        sys.exit(f"{len(recent)} reviews in the last day; push rechecks wait for a mention.")
+
+
+def replies_to_finding(comment):
+    """Whether a review comment replies to one of the bot's unsettled findings."""
+    parent = comment.get("in_reply_to_id")
+    if not parent:
+        return False
+    first = fetch_comment(f"/repos/{REPO}/pulls/comments/{parent}")
+    return ((first.get("user") or {}).get("login") == BOT_LOGIN
+            and bool(PRIOR_SEVERITY.match(first.get("body") or "")))
+
+
 def cmd_trigger():
-    """Exit 1 unless a writer's comment here asks the bot for this run's mode; react to it."""
+    """Exit 1 unless a push or a writer's comment asks for this run; react to a mention."""
+    if os.environ.get("SOURCE") == "push":
+        check_recheck()
+        return
     kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
     comment = fetch_comment(path)
     body = spoken(comment.get("body") or "")
     mention = BOT_MENTION.search(body)
+    reply = os.environ.get("SOURCE") == "reply"
     pr_url = comment.get("issue_url") or comment.get("pull_request_url") or ""
-    if not mention or not pr_url.endswith(f"/{os.environ['FORK_PR']}"):
+    if not (mention or reply) or not pr_url.endswith(f"/{os.environ['FORK_PR']}"):
         sys.exit("The comment does not ask the bot anything on this pull request.")
+    if reply and (kind != "review" or not replies_to_finding(comment)):
+        sys.exit("The comment does not reply to an open finding of the bot.")
     login = (comment.get("user") or {}).get("login", "")
     try:
         access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
@@ -801,9 +844,11 @@ def cmd_trigger():
         access = "none"
     if access not in CAN_ASK:
         sys.exit(f"{login} has {access} access; asking the bot needs write access.")
-    asked = "review" if REVIEW_ASK.match(body, mention.end()) else "answer"
+    asked = "review" if mention and REVIEW_ASK.match(body, mention.end()) else "answer"
     if asked != os.environ.get("MODE", "review"):
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
+    if reply:
+        return
     try:
         request("POST", f"{path}/reactions", {"content": "eyes"})
     except urllib.error.URLError as err:
@@ -843,20 +888,28 @@ def cmd_question():
     login = (asked.get("user") or {}).get("login", "ghost")
     question = (asked.get("body") or "").strip()[:QUOTE_LIMIT]
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "question.md").write_text(f"Question from {login}:\n\n{question}\n\n{where}\n")
+    heading = (f"Reply from {login}, without mentioning you" if os.environ.get("SOURCE") == "reply"
+               else f"Question from {login}")
+    (RUN_DIR / "question.md").write_text(f"{heading}:\n\n{question}\n\n{where}\n")
     (RUN_DIR / "question.json").write_text(json.dumps(
         {"kind": kind, "comment": int(number), "finding": finding, "asker": login,
          "quote": question.split("\n", 1)[0][:300]}) + "\n")
 
 
 def cmd_reply():
-    """Reply to the asker, settle a disputed finding; withhold a leaked credential and exit 1."""
+    """Reply to the asker or thumbs-up; settle a disputed finding, withhold a leak and exit 1."""
     asked = json.loads((RUN_DIR / "question.json").read_text())
     try:
         result = json.loads(os.environ.get("RESULT") or "null")
     except json.JSONDecodeError:
         result = None
     result = result if isinstance(result, dict) else {}
+    pr = os.environ["FORK_PR"]
+    if os.environ.get("SOURCE") == "reply" and not (result.get("reply") or "").strip():
+        if result.get("acknowledge") is True:
+            request("POST", f"/repos/{REPO}/pulls/comments/{asked['comment']}/reactions",
+                    {"content": "+1"})
+        return
     reply = unlinked((result.get("reply") or "").strip()) or NO_ANSWER
     withdraw = unlinked((result.get("withdraw") or "").strip())
     accept = unlinked((result.get("accept") or "").strip())
@@ -864,7 +917,8 @@ def cmd_reply():
         CREDENTIAL.search(text) for text in (reply, withdraw, accept))
     if leaked:
         reply, withdraw, accept = WITHHELD, "", ""
-    pr = os.environ["FORK_PR"]
+    elif (withdraw or accept) and asked.get("finding"):
+        reply = f"{reply}\n\n{RESOLVE_NOTE}"
     if asked["kind"] == "review":
         request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{asked['comment']}/replies",
                 {"body": reply})

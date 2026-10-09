@@ -23,6 +23,9 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
    conversation, hiding the earlier ones as outdated. A later run reviews only what changed since
    the last review, even after a force push, marks the findings the code has fixed, and does not
    repeat ones still open.
+3. While a review has open findings, each push to the pull request starts a re-review on its
+   own, unless five reviews ran in the last day. When someone replied under a finding that is now
+   fixed, the bot says so in that thread, since it cannot resolve threads.
 
 ## Asking questions
 
@@ -30,6 +33,9 @@ Any other words after `@kodi-review` are a question about the pull request. The 
 same thread, or quotes the question in the main conversation. In a finding's thread, a reply
 showing the finding is wrong gets agreement and marks the finding withdrawn. Questions about
 anything else, or requests to approve, merge or label, get a one-line reply saying so.
+
+Under a finding, a team member's reply needs no mention. A question or dispute gets an answer,
+and a reply that only agrees or says a fix is coming gets a 👍.
 
 ## Files
 
@@ -57,6 +63,7 @@ The reviewer reads code and text written by strangers, so it gets as little as p
   request cannot give the reviewer its own instructions, hooks or tools.
 - Output that looks like a credential is withheld. Mentions and pull request references are
   unlinked before posting.
-- Only people with write access to the reviewed repo can start a review by mentioning it, and
-  only people with write access to this repo can dispatch one by hand. A mention starts a review
-  only in the repos the relay lists.
+- Only people with write access to the reviewed repo can start a run by mentioning the bot or
+  replying under a finding, and only people with write access to this repo can dispatch one by
+  hand. A push starts a re-review only after such a review left open findings. None of it works
+  outside the repos the relay lists.

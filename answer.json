@@ -1,10 +1,11 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["reply", "withdraw", "accept"],
+  "required": ["reply", "withdraw", "accept", "acknowledge"],
   "properties": {
     "reply": {"type": "string", "maxLength": 6000},
     "withdraw": {"type": "string", "maxLength": 300},
-    "accept": {"type": "string", "maxLength": 300}
+    "accept": {"type": "string", "maxLength": 300},
+    "acknowledge": {"type": "boolean"}
   }
 }
