@@ -79,6 +79,10 @@ RESOLVE_NOTE = "I can't resolve threads, so this one is yours to close."
 BOT_LOGIN = "kodi-review[bot]"
 RECHECK_LIMIT = 5
 KODI22_LINE = re.compile(r"^- \*\*Kodi 22:\*\* (.+)$", re.M)
+INNER_DETAILS = re.compile(r"<details>(?:(?!<details>).)*?</details>", re.S)
+HTML_TAG = re.compile(r"<[^>]+>")
+CLAIM_LIMIT = 1500
+CLAIM_LABEL = " (another reviewer's claim to check)"
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
@@ -420,10 +424,29 @@ def cmd_status():
     (RUN_DIR / "status.json").write_text(json.dumps(status, indent=1) + "\n")
 
 
+def other_claim(comment):
+    """Whether a comment opens another review bot's line thread that is not marked addressed."""
+    user = comment.get("user") or {}
+    return (user.get("type") == "Bot" and user.get("login") != BOT_LOGIN
+            and bool(comment.get("path")) and not comment.get("in_reply_to_id")
+            and "Addressed in commit" not in (comment.get("body") or ""))
+
+
+def claim_text(body):
+    """Return a review bot's comment without HTML or folded sections, capped."""
+    while True:
+        body, folded = INNER_DETAILS.subn("", body)
+        if not folded:
+            break
+    body = HTML_TAG.sub("", HTML_COMMENT.sub("", body))
+    return re.sub(r"\n{3,}", "\n\n", body).strip()[:CLAIM_LIMIT]
+
+
 def discussion_text(comments):
-    """Format people's comments, plus any comment a person replied to, newest first, capped."""
+    """Format people's comments, comments they replied to and other bots' claims, newest first."""
     by_id = {c["id"]: c for c in comments}
-    kept = {c["id"]: c for c in comments if (c.get("user") or {}).get("type") == "User"}
+    kept = {c["id"]: c for c in comments
+            if (c.get("user") or {}).get("type") == "User" or other_claim(c)}
     for c in list(kept.values()):
         parent = by_id.get(c.get("in_reply_to_id"))
         if parent:
@@ -432,7 +455,10 @@ def discussion_text(comments):
     for c in sorted(kept.values(), key=lambda c: c["created_at"], reverse=True):
         where = f", {c['path']}:{c.get('line') or c.get('original_line')}" if c.get("path") else ""
         login = (c.get("user") or {}).get("login", "ghost")
-        entry = f"{login}, {c['created_at'][:10]}{where}\n{(c.get('body') or '').strip()}\n"
+        body = (c.get("body") or "").strip()
+        if other_claim(c):
+            login, body = login + CLAIM_LABEL, claim_text(body)
+        entry = f"{login}, {c['created_at'][:10]}{where}\n{body}\n"
         if size + len(entry) > DISCUSSION_LIMIT:
             break
         entries.append(entry)

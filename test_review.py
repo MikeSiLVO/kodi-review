@@ -381,18 +381,32 @@ class DiscussionTests(unittest.TestCase):
                 "body": body, "path": path, "line": 7 if path else None,
                 "in_reply_to_id": reply_to}
 
-    def test_people_and_answered_bot_comments(self):
-        """People's comments stay, newest first, with a bot comment only when a person answered."""
+    def test_people_and_bot_claims(self):
+        """People's comments stay, newest first, with other bots' line comments marked as claims."""
         comments = [
             self.comment(1, "bot", "Bot", "2026-01-01T00:00:00Z", "Throttle this.", "a.cpp"),
             self.comment(2, "dev", "User", "2026-01-02T00:00:00Z", "Not needed.", "a.cpp", 1),
             self.comment(3, "bot", "Bot", "2026-01-03T00:00:00Z", "Unanswered.", "b.cpp"),
             self.comment(4, "author", "User", "2026-01-04T00:00:00Z", "Intentional."),
         ]
+        claim = review.CLAIM_LABEL
         self.assertEqual(review.discussion_text(comments),
                          "author, 2026-01-04\nIntentional.\n\n"
+                         f"bot{claim}, 2026-01-03, b.cpp:7\nUnanswered.\n\n"
                          "dev, 2026-01-02, a.cpp:7\nNot needed.\n\n"
-                         "bot, 2026-01-01, a.cpp:7\nThrottle this.\n")
+                         f"bot{claim}, 2026-01-01, a.cpp:7\nThrottle this.\n")
+
+    def test_bot_claims_are_trimmed_and_addressed_or_own_ones_dropped(self):
+        """Another bot's claim loses its folded sections; addressed claims and the bot's own go."""
+        folded = "**Minor**\n<details><summary>s</summary><details>x</details>y</details>\n\nClaim."
+        comments = [
+            self.comment(1, "rabbit", "Bot", "2026-01-01T00:00:00Z", folded, "a.cpp"),
+            self.comment(2, "rabbit", "Bot", "2026-01-02T00:00:00Z",
+                         "Old.\n\n✅ Addressed in commit abc", "a.cpp"),
+            self.comment(3, review.BOT_LOGIN, "Bot", "2026-01-03T00:00:00Z", "**Minor: Ours**",
+                         "a.cpp")]
+        self.assertEqual(review.discussion_text(comments),
+                         f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
 
     def test_cap(self):
         """Older comments past the size cap are left out."""
@@ -1068,3 +1082,4 @@ class FollowUpTests(unittest.TestCase):
             self.assertEqual(review.earlier_kodi22(), "No. Lacks PR 1.")
         with mock.patch.object(review, "summary_comment", return_value=None):
             self.assertIsNone(review.earlier_kodi22())
+

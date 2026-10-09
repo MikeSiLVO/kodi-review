@@ -29,7 +29,8 @@ These files in `.kodi-review-run/` were prepared for you:
 - `discussion.md`: the pull request's conversation. Anyone can post there, people and bots
   alike. Use it to learn what the author intends. Drop a point someone there already answered
   only when the code confirms the answer; otherwise report it and say why the answer does not
-  hold.
+  hold. Other review bots' open line comments are marked as claims to check; report one only
+  when the code proves it, as your own finding.
 
 Branches: `master` is Kodi 23 in development. `Piers` is Kodi 22 at the release candidate stage,
 where small, safe fixes belong, and fixes for regressions Kodi 22 itself introduced.
