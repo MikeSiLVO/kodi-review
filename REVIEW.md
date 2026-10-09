@@ -148,8 +148,11 @@ One finding per root cause: report it once and list the other places in `problem
 
 ## The rest of the result
 
-- `summary`: one or two sentences. Lead with the reason for the verdict; do not recap what the
-  pull request does.
+- `summary`: one or two sentences giving the reason for the verdict. With no findings, say there
+  are no blocking problems. Add a sentence only when it settles something still open: a point in
+  the discussion the code now settles or that is not a blocker, with the reason, or a part you
+  skipped that the verdict depends on. "No blocking problems." can be the whole summary. Never
+  recap what the pull request does or list what you checked.
 - `verdict`: judged on the code, its description and `status.json`. "Ready to merge" only when
   you read the whole change. If part of it was too large or generated to check, say what you
   skipped in `summary` and do not use "Ready to merge".
