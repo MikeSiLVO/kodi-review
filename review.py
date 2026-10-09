@@ -68,7 +68,7 @@ SETTLED_STATUS = {"Fixed in": "fixed", "Withdrawn:": "withdrawn", "Accepted by":
 NO_ANSWER = "I could not finish an answer. Ask again."
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 QUOTE_LIMIT = 4000
-PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md",
+PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
              "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
