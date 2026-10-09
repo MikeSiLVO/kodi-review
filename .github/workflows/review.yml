@@ -207,6 +207,7 @@ jobs:
             echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
             echo "task=Review" >> "$GITHUB_OUTPUT"
           fi
+          find .kodi-review-run -mindepth 1 -empty ! -name new.diff -delete
           echo "files=$(cd .kodi-review-run && ls -dp -- * | paste -sd' ')" >> "$GITHUB_OUTPUT"
           mark=$(openssl rand -hex 8)
           {
