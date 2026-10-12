@@ -40,6 +40,13 @@ anything else, or requests to approve, merge or label, get a one-line reply sayi
 Under a finding, a team member's reply needs no mention. A question or dispute gets an answer,
 and a reply that only agrees or says a fix is coming gets a 👍.
 
+## Formatting only
+
+`@kodi-review format`, `clang` or `clang-format`, alone after the mention, runs only the
+formatting check and posts it as its own comment, hiding the last one. Anyone can ask, since no
+model runs. A head that already has its check is not checked again. Dispatched by hand with
+`mode` set to `format` and a dry run, it writes the check to the run's summary page instead.
+
 ## Files
 
 | File | What it is |
@@ -66,7 +73,8 @@ The reviewer reads code and text written by strangers, so it gets as little as p
   request cannot give the reviewer its own instructions, hooks or tools.
 - Output that looks like a credential is withheld. Mentions and pull request references are
   unlinked before posting.
-- Only people with write access to the reviewed repo can start a run by mentioning the bot or
-  replying under a finding, and only people with write access to this repo can dispatch one by
-  hand. A push starts a re-review only after such a review left open findings. None of it works
+- Only people with write access to the reviewed repo can start a review or an answer by
+  mentioning the bot or replying under a finding, and only people with write access to this repo
+  can dispatch one by hand. A push starts a re-review only after such a review left open findings.
+  A formatting request runs no model, so anyone may make it, once per head. None of it works
   outside the repos the relay lists.

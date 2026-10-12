@@ -45,6 +45,21 @@ test("a mention in a line comment names the review comment", () => {
     { pr: "8", repo: "xbmc/xbmc", comment: "review/5", mode: "answer", source: "mention" });
 });
 
+test("format, clang or clang-format alone asks for the formatting check, from anyone", () => {
+  const base = issueComment();
+  const modes = [["@kodi-review format", "format"], ["@kodi-review: Clang-Format.", "format"],
+    ["@kodi-review clang\n", "format"], ["@kodi-review format this?", "answer"],
+    ["@kodi-review formatting", "answer"]];
+  for (const [body, mode] of modes) {
+    const payload = issueComment({ comment: { ...base.comment, body } });
+    assert.equal(trigger("issue_comment", payload, REPOS).mode, mode, body);
+  }
+  const stranger = (body) => issueComment({ comment: { ...base.comment, body,
+    author_association: "NONE" } });
+  assert.equal(trigger("issue_comment", stranger("@kodi-review format"), REPOS).mode, "format");
+  assert.equal(trigger("issue_comment", stranger("@kodi-review"), REPOS), null);
+});
+
 test("everything else is ignored", () => {
   const base = issueComment();
   const ignored = [

@@ -32,7 +32,7 @@ on:
         required: false
         type: string
       mode:
-        description: "Set by the relay: answer runs each get their own queue, reviews share one"
+        description: "Set by the relay: review (one queue), answer (a queue per comment) or format (own queue, no model)"
         required: false
         type: string
       source:
@@ -43,7 +43,7 @@ on:
 concurrency:
   group: >-
     kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.mode == 'answer' && inputs.comment
-    || 'review' }}
+    || inputs.mode == 'format' && 'format' || 'review' }}
   cancel-in-progress: false
 
 env:
@@ -162,6 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .kodi-review-run
+          if [ "$MODE" = format ]; then echo "prepared=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           python3 "$BOT/review.py" pr
           if [ "$MODE" = answer ]; then python3 "$BOT/review.py" question; fi
           if [ -z "$REPLAY_SHA" ]; then
@@ -218,6 +219,7 @@ jobs:
           echo "prepared=true" >> "$GITHUB_OUTPUT"
 
       - name: Install bubblewrap for the subprocess env scrub
+        if: env.MODE != 'format'
         run: |
           (cd "$BOT/vendor" && sha256sum -c --quiet SHA256SUMS)
           for deb in "$BOT"/vendor/*.deb; do sudo dpkg-deb -x "$deb" /; done
@@ -245,6 +247,7 @@ jobs:
 
       - name: Review
         id: claude
+        if: env.MODE != 'format'
         uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -283,7 +286,7 @@ jobs:
         run: python3 "$BOT/review.py" usage "$EXECUTION_FILE" || true
 
       - name: Check the formatting
-        if: always() && steps.prep.outcome == 'success' && env.MODE == 'review'
+        if: always() && steps.prep.outcome == 'success' && env.MODE != 'answer'
         env:
           HEAD_SHA: ${{ steps.refs.outputs.head_sha }}
           BASE_SHA: ${{ steps.refs.outputs.base_sha }}
@@ -298,7 +301,7 @@ jobs:
           python3 "$BOT/review.py" format
 
       - name: Keep the result for the post job
-        if: always() && steps.prep.outcome == 'success'
+        if: always() && steps.prep.outcome == 'success' && env.MODE != 'format'
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: python3 "$BOT/review.py" keep "$EXECUTION_FILE"
@@ -349,6 +352,10 @@ jobs:
           python3 bot/review.py render .kodi-review-run/status.json .kodi-review-run/result.json \
             >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Write the formatting check to the run summary
+        if: env.MODE == 'format' && inputs.dry_run
+        run: python3 bot/review.py format-render >> "$GITHUB_STEP_SUMMARY"
+
       - name: Split the repository name
         id: target
         if: ${{ !inputs.dry_run && inputs.sha == '' }}
@@ -372,5 +379,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py \
-            "$([ "$MODE" = answer ] && echo reply || echo post)"
+          case "$MODE" in
+            format) python3 bot/review.py format-post ;;
+            answer) RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py reply ;;
+            *) RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py post ;;
+          esac

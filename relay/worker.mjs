@@ -1,5 +1,6 @@
 const MENTION = /(?<![\w-])@kodi-review(?![\w-])/i;
 const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
+const FORMAT_ASK = /^[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$/i;
 const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
 
 /** Return a comment's own words, without code, quoted lines or HTML comments. */
@@ -28,16 +29,16 @@ export function trigger(event, payload, allowed) {
   if (payload.action !== "created" || !allowed.includes(payload.repository?.full_name)) return null;
   const comment = payload.comment;
   const words = spoken(comment?.body || "");
-  if (!comment || comment.user?.type === "Bot" || STRANGERS.has(comment.author_association)
-      || !MENTION.test(words)) return null;
+  if (!comment || comment.user?.type === "Bot" || !MENTION.test(words)) return null;
   const pr = event === "issue_comment" && payload.issue?.pull_request ? payload.issue
     : event === "pull_request_review_comment" ? payload.pull_request : null;
   if (!pr || pr.state !== "open") return null;
   const kind = event === "issue_comment" ? "issue" : "review";
   const after = words.slice(MENTION.exec(words).index + "@kodi-review".length);
+  const mode = FORMAT_ASK.test(after) ? "format" : REVIEW_ASK.test(after) ? "review" : "answer";
+  if (mode !== "format" && STRANGERS.has(comment.author_association)) return null;
   return { pr: String(pr.number), repo: payload.repository.full_name,
-    comment: `${kind}/${comment.id}`, mode: REVIEW_ASK.test(after) ? "review" : "answer",
-    source: "mention" };
+    comment: `${kind}/${comment.id}`, mode, source: "mention" };
 }
 
 /** Return the bot's newest summary comment on a pull request, or null. */

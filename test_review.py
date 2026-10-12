@@ -244,6 +244,31 @@ class FormatTests(unittest.TestCase):
         self.assertNotIn("Commit 2", text)
         self.assertIn(f"\n\n{len(PATCH.splitlines())} more lines not shown.\n\n</details>", text)
 
+    def test_fence_in_patch_not_shown(self):
+        """A patch holding a code fence is counted as lines not shown."""
+        text = review.format_details(self.facts(PATCH.replace("return x;", "``` x;")))
+        self.assertIn(f"{len(PATCH.splitlines())} more lines not shown.", text)
+        self.assertNotIn("```diff", text)
+
+    def test_post(self):
+        """A format request gets its own comment tagged with the head, hiding the earlier ones."""
+        earlier = [{"user": {"type": "Bot"}, "id": 1, "node_id": "N1",
+                    "body": f"<!-- kodi-review format sha={'b' * 40} -->"}]
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                mock.patch.object(review, "format_comments", return_value=earlier), \
+                mock.patch.object(review, "hide_summaries") as hide, \
+                mock.patch.object(review, "request") as request, \
+                mock.patch.dict(os.environ, {"HEAD_SHA": "a" * 40, "FORK_PR": "7"}):
+            Path(tmp, "format.json").write_text(json.dumps(self.facts()))
+            review.cmd_format_post()
+        self.assertEqual(request.call_args.args[2]["body"],
+                         f"<!-- kodi-review format sha={'a' * 40} -->\n"
+                         "**Formatting:** matches clang-format 23.1.3\n\n"
+                         "<sub>Checked up to aaaaaaaaaaaa.</sub>")
+        hide.assert_called_once_with(earlier)
+        self.assertTrue(review.format_text({}, "a" * 40).startswith("**Formatting:** not checked"))
+
     def test_format_commit(self):
         """Exit 0 is clean, exit 1 with a diff is a patch, and anything else raises."""
         def ran(code, out="", err=""):
@@ -713,16 +738,21 @@ class TrimTests(unittest.TestCase):
 class TriggerTests(unittest.TestCase):
     """Deciding whether a comment may start a run, and whether it asks for a review or answer."""
 
-    def run_trigger(self, comment, access="write", asker="issue/5", mode="review"):
+    def run_trigger(self, comment, access="write", asker="issue/5", mode="review", posted=()):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
         def reply(method, path, body=None, raw=False):
-            """Reply like GitHub for the comment and the commenter's access."""
+            """Reply like GitHub for the comment, the commenter's access and the format comments."""
             calls.append((method, path))
             if comment is None:
                 refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
                 raise refusals[-1]
+            if path.endswith("/pulls/7"):
+                return {"head": {"sha": "a" * 40}}
+            if "/issues/7/comments" in path:
+                return [{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
+                        for sha in posted]
             if path.endswith("/permission"):
                 if access is None:
                     refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
@@ -764,6 +794,26 @@ class TriggerTests(unittest.TestCase):
             calls, code = self.run_trigger(self.comment(body=body), mode=other)
             self.assertTrue(code, body)
             self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_format_alone_asks_for_formatting(self):
+        """Format, clang or clang-format alone asks for the formatting check; more is a question."""
+        for body, mode in (("@kodi-review format", "format"),
+                           ("@kodi-review: Clang-Format.", "format"),
+                           ("@kodi-review clang", "format"),
+                           ("@kodi-review format this?", "answer")):
+            self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+
+    def test_anyone_may_ask_for_formatting_once_per_head(self):
+        """A format request needs no write access, and is refused once the head has its check."""
+        calls, code = self.run_trigger(self.comment(body="@kodi-review format"), access="none",
+                                       mode="format", posted=["b" * 40])
+        self.assertIsNone(code)
+        self.assertFalse(any(path.endswith("/permission") for _, path in calls))
+        self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
+        calls, code = self.run_trigger(self.comment(body="@kodi-review format"), access="none",
+                                       mode="format", posted=["a" * 40])
+        self.assertIn("already posted", str(code))
+        self.assertNotIn("POST", [method for method, _ in calls])
 
     def test_line_comment_is_read_from_pulls(self):
         """A line comment is read from the pull request comments and passes."""

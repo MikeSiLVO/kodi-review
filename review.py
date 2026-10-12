@@ -19,6 +19,7 @@ UPSTREAM = os.environ.get("UPSTREAM", "xbmc/xbmc")
 KODI = "xbmc/xbmc"
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
+FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
 SECTION = re.compile(r"^diff --git a/\S+ b/(\S+)$", re.M)
@@ -91,6 +92,7 @@ CLAIM_LIMIT = 1500
 ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
 CLAIM_LABEL = " (another reviewer's claim to check)"
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
+FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
              "callers.txt", "original.diff", "new.diff", "full.diff")
@@ -770,10 +772,13 @@ def format_line(facts):
 
 
 def format_details(facts):
-    """Format clang-format's patches as one folded block, cut to size, labeled by commit if many."""
+    """Format the fence-free patches as one folded block, cut to size, labeled by commit if many."""
     parts, used, left = [], 0, 0
     for commit in facts.get("commits") or []:
         lines = commit["patch"].splitlines()
+        if "```" in commit["patch"]:
+            left += len(lines)
+            continue
         shown = []
         for line in lines:
             if used + len(line) + 1 > FORMAT_CHAR_LIMIT:
@@ -791,6 +796,41 @@ def format_details(facts):
         return ""
     body = "\n\n".join(parts)
     return f"<details><summary>clang-format changes</summary>\n\n{body}\n\n</details>"
+
+
+def format_comments():
+    """Return the bot's formatting comments on the pull request, oldest first."""
+    return [c for c in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments")
+            if c["user"]["type"] == "Bot" and FORMAT_MARKER.match(c["body"])]
+
+
+def format_text(facts, head):
+    """Format the comment a format request gets: its Where it stands line, any patch, the commit."""
+    parts = [format_line(facts) or "**Formatting:** not checked"]
+    details = format_details(facts)
+    if details:
+        parts.append(details)
+    parts.append(f"<sub>Checked up to {head[:12]}.</sub>")
+    return "\n\n".join(parts)
+
+
+def cmd_format_render():
+    """Render the formatting comment without posting it."""
+    print(unlinked(format_text(load_format(), os.environ["HEAD_SHA"])))
+
+
+def cmd_format_post():
+    """Post the formatting check, hiding the bot's earlier ones; exit 1 on a credential."""
+    head = os.environ["HEAD_SHA"]
+    earlier = format_comments()
+    text = unlinked(format_text(load_format(), head))
+    withheld = bool(CREDENTIAL.search(text))
+    request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments",
+            {"body": f"<!-- kodi-review format sha={head} -->\n{WITHHELD if withheld else text}"})
+    if earlier:
+        hide_summaries(earlier)
+    if withheld:
+        sys.exit(1)
 
 
 def linked_builds(names, links):
@@ -1004,7 +1044,7 @@ def replies_to_finding(comment):
 
 
 def cmd_trigger():
-    """Exit 1 unless a push or a writer's comment asks for this run; react to a mention."""
+    """Exit 1 unless a push, writer or unchecked head's format request asks; react to mentions."""
     if os.environ.get("SOURCE") == "push":
         check_recheck()
         return
@@ -1019,16 +1059,26 @@ def cmd_trigger():
         sys.exit("The comment does not ask the bot anything on this pull request.")
     if reply and (kind != "review" or not replies_to_finding(comment)):
         sys.exit("The comment does not reply to an open finding of the bot.")
-    login = (comment.get("user") or {}).get("login", "")
-    try:
-        access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
-    except urllib.error.HTTPError:
-        access = "none"
-    if access not in CAN_ASK:
-        sys.exit(f"{login} has {access} access; asking the bot needs write access.")
-    asked = "review" if mention and REVIEW_ASK.match(body, mention.end()) else "answer"
+    asked = "answer"
+    if mention and FORMAT_ASK.match(body, mention.end()):
+        asked = "format"
+    elif mention and REVIEW_ASK.match(body, mention.end()):
+        asked = "review"
     if asked != os.environ.get("MODE", "review"):
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
+    if asked == "format":
+        head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+        posted = {m[1] for c in format_comments() if (m := FORMAT_MARKER.match(c["body"]))}
+        if head in posted:
+            sys.exit(f"The formatting check of {head[:12]} is already posted.")
+    else:
+        login = (comment.get("user") or {}).get("login", "")
+        try:
+            access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
+        except urllib.error.HTTPError:
+            access = "none"
+        if access not in CAN_ASK:
+            sys.exit(f"{login} has {access} access; asking the bot needs write access.")
     if reply:
         return
     try:
@@ -1211,7 +1261,8 @@ COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_pie
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
             "preload": cmd_preload, "keep": cmd_keep,
-            "usage": cmd_usage, "format": cmd_format}
+            "usage": cmd_usage, "format": cmd_format, "format-post": cmd_format_post,
+            "format-render": cmd_format_render}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()
