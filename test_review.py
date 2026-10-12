@@ -17,6 +17,8 @@ import review
 RESULT = {"summary": "Fixes the crash.", "verdict": "Ready to merge", "kodi22": "Yes, for 22.0",
           "kodi22_reason": "Piers has the same bug.", "next_step": "A team member merges it.",
           "findings": []}
+PATCH = ("diff --git a/a.cpp b/a.cpp\nindex 1..2 100644\n--- a/a.cpp\n+++ b/a.cpp\n"
+         "@@ -1 +1,4 @@\n-int   g( int x ){return x;}\n+int g(int x)\n+{\n+  return x;\n+}\n")
 
 
 def changed(name, patch, sha="0"):
@@ -197,6 +199,92 @@ class RenderTests(unittest.TestCase):
             "**Kodi 22:** Yes, for 22.0. Piers has the same bug.",
             "**Next:** A team member merges it.",
             "**Unavailable:** pull request"])
+
+
+class FormatTests(unittest.TestCase):
+    """The clang-format check and its place in the summary."""
+
+    def facts(self, *patches, checked=1):
+        """Return format.json facts with one patched commit per patch."""
+        commits = [{"sha": str(n) * 40, "subject": f"Commit {n}", "patch": patch}
+                   for n, patch in enumerate(patches, 1)]
+        return {"version": "23.1.3", "checked": checked, "commits": commits}
+
+    def test_line(self):
+        """The line says not checked, matching, or how much clang-format would change."""
+        self.assertIsNone(review.format_line({}))
+        self.assertEqual(review.format_line({"error": "x"}), "**Formatting:** not checked")
+        self.assertEqual(review.format_line(self.facts()),
+                         "**Formatting:** matches clang-format 23.1.3")
+        self.assertEqual(review.format_line(self.facts(PATCH)),
+                         "**Formatting:** clang-format 23.1.3 would change 1 place in 1 file")
+        other = PATCH.replace("a.cpp", "b.cpp")
+        self.assertEqual(review.format_line(self.facts(PATCH, PATCH + other, checked=2)),
+                         "**Formatting:** clang-format 23.1.3 would change 3 places in 2 files")
+
+    def test_summary(self):
+        """The line follows the test builds, and one commit's patch folds under the block."""
+        status = {"builds": {"count": 1, "failing": [], "pending": []},
+                  "format": self.facts(PATCH)}
+        self.assertEqual(block(status)[:2], [
+            "**Test builds:** passing",
+            "**Formatting:** clang-format 23.1.3 would change 1 place in 1 file"])
+        text = review.summary_text(RESULT, status, "f" * 40, [], False)
+        details = text.split("**Where it stands**\n")[1].split("\n\n", 1)[1]
+        self.assertTrue(details.startswith(
+            "<details><summary>clang-format changes</summary>\n\n```diff\ndiff --git"))
+        self.assertTrue(details.endswith(
+            "```\n\n</details>\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
+
+    def test_labels_and_cut(self):
+        """Several commits are labeled, and lines past the size limit are counted, not shown."""
+        with mock.patch.object(review, "FORMAT_CHAR_LIMIT", len(PATCH) + 10):
+            text = review.format_details(self.facts(PATCH, PATCH, checked=2))
+        self.assertIn("`111111111111` Commit 1\n\n```diff\n", text)
+        self.assertNotIn("Commit 2", text)
+        self.assertIn(f"\n\n{len(PATCH.splitlines())} more lines not shown.\n\n</details>", text)
+
+    def test_format_commit(self):
+        """Exit 0 is clean, exit 1 with a diff is a patch, and anything else raises."""
+        def ran(code, out="", err=""):
+            return subprocess.CompletedProcess([], code, out, err)
+        tools = {"GIT_CLANG_FORMAT": "gcf", "CLANG_FORMAT": "cf"}
+        with mock.patch.dict(os.environ, tools), mock.patch.object(review.subprocess, "run") as run:
+            run.return_value = ran(0, "no modified files to format\n")
+            self.assertEqual(review.format_commit("p", "c"), "")
+            run.return_value = ran(1, PATCH)
+            self.assertEqual(review.format_commit("p", "c"), PATCH)
+            run.return_value = ran(2, err="fatal: bad revision")
+            with self.assertRaisesRegex(RuntimeError, "bad revision"):
+                review.format_commit("p", "c")
+        self.assertEqual(run.call_args.args[0][:3], ["gcf", "--binary", "cf"])
+
+    def test_base_configs(self):
+        """The base branch's clang-format files replace the pull request's, and added ones go."""
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                review.git("init", "-q")
+                Path("lib").mkdir()
+                Path(".clang-format").write_text("ColumnLimit: 100\n")
+                Path("lib/.clang-format").write_text("DisableFormat: true\n")
+                commit = ("-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                          "commit", "-qm")
+                review.git("add", "-A")
+                review.git(*commit, "base")
+                base = review.git("rev-parse", "HEAD").strip()
+                Path(".clang-format").write_text("ColumnLimit: 200\n")
+                Path("src").mkdir()
+                Path("src/.clang-format").write_text("DisableFormat: true\n")
+                review.git("add", "-A")
+                review.git(*commit, "loosen")
+                review.use_base_configs(base)
+                self.assertEqual(Path(".clang-format").read_text(), "ColumnLimit: 100\n")
+                self.assertTrue(Path("lib/.clang-format").exists())
+                self.assertFalse(Path("src/.clang-format").exists())
+            finally:
+                os.chdir(cwd)
 
 
 class SettledVerdictTests(unittest.TestCase):

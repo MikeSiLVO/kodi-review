@@ -282,6 +282,21 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: python3 "$BOT/review.py" usage "$EXECUTION_FILE" || true
 
+      - name: Check the formatting
+        if: always() && steps.prep.outcome == 'success' && env.MODE == 'review'
+        env:
+          HEAD_SHA: ${{ steps.refs.outputs.head_sha }}
+          BASE_SHA: ${{ steps.refs.outputs.base_sha }}
+          CLANG_FORMAT: ${{ runner.temp }}/clang-format/bin/clang-format
+          GIT_CLANG_FORMAT: ${{ runner.temp }}/git-clang-format/bin/git-clang-format
+        run: |
+          for tool in clang-format git-clang-format; do
+            python3 -m venv "$RUNNER_TEMP/$tool"
+            "$RUNNER_TEMP/$tool/bin/pip" install -q --require-hashes --only-binary :all: \
+              -r "$BOT/vendor/$tool.txt" || echo "::warning::$tool did not install"
+          done
+          python3 "$BOT/review.py" format
+
       - name: Keep the result for the post job
         if: always() && steps.prep.outcome == 'success'
         env:
@@ -302,6 +317,7 @@ jobs:
             .kodi-review-run/prior.json
             .kodi-review-run/new.diff
             .kodi-review-run/question.json
+            .kodi-review-run/format.json
 
   post:
     needs: [trigger, review]

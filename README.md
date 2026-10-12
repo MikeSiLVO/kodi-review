@@ -26,6 +26,9 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
 3. While a review has open findings, each push to the pull request starts a re-review on its
    own, unless five reviews ran in the last day. When someone replied under a finding that is now
    fixed, the bot says so in that thread, since it cannot resolve threads.
+4. Each commit's changed lines are checked against the base branch's `.clang-format`, as the
+   Jenkins build does, but with a newer clang-format. The summary says whether they match and
+   folds any patch under the status block.
 
 ## Asking questions
 
@@ -50,7 +53,7 @@ and a reply that only agrees or says a fix is coming gets a 👍.
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
-| `vendor/` | bubblewrap and socat for Ubuntu 24.04, checked against `SHA256SUMS` before install |
+| `vendor/` | bubblewrap and socat for Ubuntu 24.04, checked against `SHA256SUMS` before install, and the hash-pinned clang-format wheels |
 
 ## Security
 

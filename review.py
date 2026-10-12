@@ -27,6 +27,9 @@ DEFINITION = re.compile(r"^[+-][A-Za-z_][^(;\n]*\b\w+::(~?\w+)\s*\(", re.M)
 NOT_FUNCTIONS = {"if", "for", "while", "switch", "return", "sizeof", "catch"}
 CALLER_LIMIT = 25
 CALLERS_LINE_LIMIT = 150
+FORMAT_EXTENSIONS = "c,cc,cpp,cxx,h,hh,hpp,hxx,inl,m,mm"
+FORMAT_CONFIGS = (".clang-format", ".clang-format-ignore")
+FORMAT_CHAR_LIMIT = 20_000
 DISCUSSION_LIMIT = 25_000
 REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
@@ -218,6 +221,61 @@ def cmd_callers():
         elif found:
             lines += [f"{name}:", *(" ".join(line.split())[:200] for line in found), ""]
     (RUN_DIR / "callers.txt").write_text("\n".join(lines).rstrip() + "\n" if lines else "")
+
+
+def git(*args):
+    """Run git in the pull request checkout and return its output."""
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+
+
+def use_base_configs(base):
+    """Use the base branch's clang-format files, deleting any the pull request added."""
+    def configs(listing):
+        return {path for path in listing.splitlines() if Path(path).name in FORMAT_CONFIGS}
+    kept = configs(git("ls-tree", "-r", "--name-only", base))
+    for path in configs(git("ls-files")) - kept:
+        Path(path).unlink(missing_ok=True)
+    for path in kept:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(git("show", f"{base}:{path}"))
+
+
+def format_commit(parent, sha):
+    """Return clang-format's patch for the lines one commit changed, empty when they comply."""
+    done = subprocess.run([os.environ["GIT_CLANG_FORMAT"], "--binary", os.environ["CLANG_FORMAT"],
+                           "--diff", "--extensions", FORMAT_EXTENSIONS, parent, sha],
+                          capture_output=True, text=True, errors="replace")
+    if done.returncode == 0:
+        return ""
+    if done.returncode == 1 and done.stdout.startswith("diff --git"):
+        return done.stdout
+    raise RuntimeError(done.stderr.strip() or done.stdout.strip() or f"exit {done.returncode}")
+
+
+def cmd_format():
+    """Use the base branch's clang-format files, then write each commit's patch to format.json."""
+    base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
+    try:
+        version = subprocess.run([os.environ["CLANG_FORMAT"], "--version"], capture_output=True,
+                                 text=True, check=True).stdout
+        commits = request("GET", f"/repos/{UPSTREAM}/compare/{base}...{head}")["commits"]
+        git("fetch", "-q", "--no-tags", f"--depth={len(commits) + 1}", "origin", head, base)
+        use_base_configs(base)
+        patched = []
+        for commit in commits:
+            if len(commit["parents"]) != 1:
+                continue
+            patch = format_commit(commit["parents"][0]["sha"], commit["sha"])
+            if patch:
+                patched.append({"sha": commit["sha"], "patch": patch,
+                                "subject": commit["commit"]["message"].partition("\n")[0]})
+        facts = {"version": version.split("version", 1)[1].split()[0],
+                 "checked": len(commits), "commits": patched}
+    except (OSError, KeyError, IndexError, RuntimeError, subprocess.CalledProcessError,
+            urllib.error.URLError) as err:
+        print(f"Formatting unavailable: {err}")
+        facts = {"error": str(err)}
+    (RUN_DIR / "format.json").write_text(json.dumps(facts, indent=1) + "\n")
 
 
 def trimmed_body(body):
@@ -663,6 +721,9 @@ def status_lines(status, result):
         lines.append(f"**Test builds:** pending ({linked_builds(builds['pending'], links)})")
     elif builds.get("count"):
         lines.append("**Test builds:** passing")
+    formatting = format_line(status.get("format") or {})
+    if formatting:
+        lines.append(formatting)
     if status.get("conflicts"):
         lines.append(f"**Conflicts:** yes, needs a rebase onto {status['base']}")
     if status.get("label_problems"):
@@ -673,6 +734,63 @@ def status_lines(status, result):
     if status.get("unavailable"):
         lines.append("**Unavailable:** " + ", ".join(status["unavailable"]))
     return lines
+
+
+def load_format():
+    """Load the formatting check, or an empty dict when it wrote nothing usable."""
+    try:
+        return json.loads((RUN_DIR / "format.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def format_spots(facts):
+    """Count the places clang-format would change and the files they are in."""
+    places, files = 0, set()
+    for commit in facts.get("commits") or []:
+        for line in commit["patch"].splitlines():
+            if line.startswith("@@"):
+                places += 1
+            elif line.startswith("+++ b/"):
+                files.add(line[6:])
+    return places, len(files)
+
+
+def format_line(facts):
+    """Format the formatting check's Where it stands line, or None when it did not run."""
+    if not facts:
+        return None
+    if "error" in facts:
+        return "**Formatting:** not checked"
+    if not facts["commits"]:
+        return f"**Formatting:** matches clang-format {facts['version']}"
+    places, files = format_spots(facts)
+    return (f"**Formatting:** clang-format {facts['version']} would change {places} "
+            f"place{'s' if places != 1 else ''} in {files} file{'s' if files != 1 else ''}")
+
+
+def format_details(facts):
+    """Format clang-format's patches as one folded block, cut to size, labeled by commit if many."""
+    parts, used, left = [], 0, 0
+    for commit in facts.get("commits") or []:
+        lines = commit["patch"].splitlines()
+        shown = []
+        for line in lines:
+            if used + len(line) + 1 > FORMAT_CHAR_LIMIT:
+                break
+            shown.append(line)
+            used += len(line) + 1
+        left += len(lines) - len(shown)
+        if not shown:
+            continue
+        label = f"`{commit['sha'][:12]}` {commit['subject']}\n\n" if facts["checked"] > 1 else ""
+        parts.append(label + "```diff\n" + "\n".join(shown) + "\n```")
+    if left:
+        parts.append(f"{left} more line{'s' if left != 1 else ''} not shown.")
+    if not parts:
+        return ""
+    body = "\n\n".join(parts)
+    return f"<details><summary>clang-format changes</summary>\n\n{body}\n\n</details>"
 
 
 def linked_builds(names, links):
@@ -730,7 +848,10 @@ def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
     parts.append("---")
     lines = status_lines(status, result)
     parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
-    scope = " (changes since the last review only)" if rerun else ""
+    details = format_details(status.get("format") or {})
+    if details:
+        parts.append(details)
+    scope =" (changes since the last review only)" if rerun else ""
     footer = f"Reviewed up to {head[:12]}{scope}."
     if fixed:
         footer += f" {fixed} earlier finding{'s' if fixed != 1 else ''} fixed."
@@ -822,7 +943,7 @@ def cmd_post():
     inline, loose = place_findings(result["findings"], lines)
     rerun = (RUN_DIR / "new.diff").exists()
     still_open = [{"severity": severity} for severity in finding_spots(prior, fixed).values()]
-    status = load_status()
+    status = dict(load_status(), format=load_format())
     summary = unlinked(summary_text(result, status, head, loose, rerun, len(fixed), still_open))
     for comment in inline:
         comment["body"] = unlinked(comment["body"])
@@ -1017,6 +1138,7 @@ def cmd_render():
     """Render a result's summary comment without posting, or the withheld or unfinished note."""
     status_file, result_file = Path(sys.argv[2]), Path(sys.argv[3])
     status = json.loads(status_file.read_text()) if status_file.exists() else {}
+    status["format"] = load_format()
     try:
         result = json.loads(result_file.read_text())
     except (OSError, json.JSONDecodeError):
@@ -1089,7 +1211,7 @@ COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_pie
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
             "preload": cmd_preload, "keep": cmd_keep,
-            "usage": cmd_usage}
+            "usage": cmd_usage, "format": cmd_format}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

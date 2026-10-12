@@ -32,3 +32,14 @@ jobs:
             fi
           done
           exit "$stale"
+
+      - name: Compare the pinned clang-format with PyPI's newest
+        if: always()
+        run: |
+          pinned=$(sed -n 's/^clang-format==\([^ ]*\).*/\1/p' vendor/clang-format.txt)
+          newest=$(curl -fsS https://pypi.org/pypi/clang-format/json | jq -r .info.version)
+          if [ "$pinned" != "$newest" ]; then
+            echo "::error::clang-format $pinned is pinned, PyPI has $newest"
+            exit 1
+          fi
+          echo "clang-format $pinned is current"
