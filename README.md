@@ -15,7 +15,7 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
    code, a quote or an HTML comment does not count.
 
    `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the
-   repository (xbmc/xbmc by default), the effort level (high by default), a dry run that writes
+   repository (xbmc/xbmc by default), the effort level (xhigh by default), a dry run that writes
    the review to the run's summary page instead of posting it, and a commit for a blind replay,
    which reviews the pull request as it stood then, without its discussion or status, and also
    posts nothing.
