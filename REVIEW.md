@@ -78,7 +78,8 @@ An empty list is the normal result for a sound change.
 
 For every candidate, read the code the claim depends on (the function, the callers and callees
 involved, the tests that cover it) and try to show the claim is wrong. Keep it only if it
-survives.
+survives. Test a reason to drop a candidate the same way before you rely on it. Judge both
+against the merge base: a problem the base does not have is new, even when an older Kodi had it.
 
 - Name the real caller, input or user action that triggers it. If only a hypothetical future
   caller could, drop it.
