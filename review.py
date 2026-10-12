@@ -68,6 +68,9 @@ HIDE_MUTATION = """mutation($id: ID!) {
 RELEASES_QUERY = """query($sha: String!) { repository(owner: "xbmc", name: "xbmc") {
   kodi21: ref(qualifiedName: "refs/heads/Omega") { compare(headRef: $sha) { status } }
   kodi22: ref(qualifiedName: "refs/heads/Piers") { compare(headRef: $sha) { status } } } }"""
+BODY_EDITS_QUERY = """query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { userContentEdits(first: 100) { nodes { editedAt diff } } } } }"""
 FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
 ACCEPTED_NOTE = "**Accepted by {}:** {}\n\n"
@@ -223,10 +226,26 @@ def trimmed_body(body):
     return re.sub(r"\n{3,}", "\n\n", UNTICKED.sub("", body)).strip()
 
 
+def body_as_of(edits, cutoff, current):
+    """Return the newest version of the description saved by a given time, else the original."""
+    versions = sorted((e["editedAt"], e["diff"]) for e in edits if e.get("diff") is not None)
+    if not versions:
+        return current
+    before = [body for at, body in versions if at <= cutoff]
+    return before[-1] if before else versions[0][1]
+
+
 def cmd_pr():
-    """Write the upstream pull request's title, trimmed description and target to pr.json."""
+    """Write title, description and target to pr.json, a replay's description as of its commit."""
     pr = request("GET", f"/repos/{UPSTREAM}/pulls/{os.environ['UPSTREAM_PR']}")
-    facts = {"number": pr["number"], "title": pr["title"], "body": trimmed_body(pr["body"]),
+    body = pr["body"]
+    if os.environ.get("REPLAY_SHA"):
+        commit = request("GET", f"/repos/{UPSTREAM}/commits/{os.environ['HEAD_SHA']}")
+        owner, name = UPSTREAM.split("/")
+        data = graphql(BODY_EDITS_QUERY, owner=owner, name=name, number=pr["number"])
+        edits = data["repository"]["pullRequest"]["userContentEdits"]["nodes"]
+        body = body_as_of(edits, commit["commit"]["committer"]["date"], body)
+    facts = {"number": pr["number"], "title": pr["title"], "body": trimmed_body(body),
              "author": pr["user"]["login"], "target": pr["base"]["ref"], "state": pr["state"],
              "draft": pr["draft"]}
     RUN_DIR.mkdir(exist_ok=True)

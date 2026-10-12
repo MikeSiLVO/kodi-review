@@ -604,6 +604,16 @@ class TrimTests(unittest.TestCase):
                 "coderabbit.ai -->")
         self.assertEqual(review.trimmed_body(body), "Fixes a crash.\n\n- [x] **Bug fix**")
 
+    def test_body_as_of(self):
+        """A replay gets the newest description saved by its commit time, else the original."""
+        edits = [{"editedAt": "2026-10-12T08:00:00Z", "diff": "Fixed the race too."},
+                 {"editedAt": "2026-10-11T18:00:00Z", "diff": "First."},
+                 {"editedAt": "2026-10-11T20:00:00Z", "diff": "Second."},
+                 {"editedAt": "2026-10-11T21:00:00Z", "diff": None}]
+        self.assertEqual(review.body_as_of(edits, "2026-10-11T23:00:00Z", "Now."), "Second.")
+        self.assertEqual(review.body_as_of(edits, "2026-10-11T17:00:00Z", "Now."), "First.")
+        self.assertEqual(review.body_as_of([], "2026-10-11T23:00:00Z", "Now."), "Now.")
+
     def test_prior_finding_first_line(self):
         """An earlier finding keeps only its first line."""
         thread = {"id": "T1", "isResolved": False, "path": "a.cpp", "line": 2,
