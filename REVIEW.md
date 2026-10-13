@@ -53,11 +53,17 @@ that still assume the old meaning. Name the one that breaks.
 
 Test what the pull request says it does: for each behavior the title and description promise,
 pick one concrete input that exercises it (a size, a value, a user action) and trace it through
-the changed code. A promise the code does not keep is a finding.
+the changed code to what the user sees. A promise the code does not keep is a finding.
 
-Test the edges of every condition the change adds or alters: pick one input just outside the
-case the change targets (another layout, mode, setting, platform or caller) and trace it. A
-result that changes there is a finding unless the description says it should.
+Test the edges of every condition the change adds or alters, with more than one input each. Try
+inputs just outside the case it targets, from its surroundings (another layout, mode, setting,
+platform or caller) and from its data (a look-alike that matches but is not the target, a size
+that does not divide evenly, what an earlier run or another path left behind, the same value on
+its other paths), and trace them. A result that changes there is a finding unless the
+description says it should.
+
+When the change edits one branch of an if/else-if chain, a switch or a first-match list such as a
+skin variable, list the inputs that now reach a different branch and check each.
 
 Never report:
 - behavior that the description, a code comment or the surrounding feature shows is intentional
