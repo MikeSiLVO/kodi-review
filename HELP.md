@@ -5,4 +5,6 @@ Start a comment with one of these:
 - `@kodi-review` and a question: an answer from the code.
 - `@kodi-review help`: this list.
 
-Reviews and questions need write access. A reply under one of my findings needs no mention, and while findings are open each push gets a recheck.
+Reviews and questions need write access.
+A reply under one of my findings needs no mention.
+While findings are open, each push gets a recheck.
