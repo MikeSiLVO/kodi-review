@@ -292,6 +292,24 @@ class FormatTests(unittest.TestCase):
                 review.format_commit("p", "c")
         self.assertEqual(run.call_args.args[0][:3], ["gcf", "--binary", "cf"])
 
+    def test_commits_come_from_the_pull_request_repository(self):
+        """Commits are fetched from the pull request's repository, never the checkout's origin."""
+        commits = [{"sha": "b" * 40, "parents": [{"sha": "a" * 40}], "commit": {"message": "Fix"}}]
+        env = {"BASE_SHA": "a" * 40, "HEAD_SHA": "b" * 40, "CLANG_FORMAT": "cf"}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                mock.patch.object(review, "request", return_value={"commits": commits}), \
+                mock.patch.object(review, "git") as git, \
+                mock.patch.object(review, "use_base_configs"), \
+                mock.patch.object(review, "format_commit", return_value=""), \
+                mock.patch.object(review.subprocess, "run") as run, \
+                mock.patch.dict(os.environ, env):
+            run.return_value.stdout = "clang-format version 23.1.3"
+            review.cmd_format()
+            facts = json.loads(Path(tmp, "format.json").read_text())
+        self.assertEqual(git.call_args.args[4], f"https://github.com/{review.UPSTREAM}.git")
+        self.assertEqual(facts, {"version": "23.1.3", "checked": 1, "commits": []})
+
     def test_base_configs(self):
         """The base branch's clang-format files replace the pull request's, and added ones go."""
         cwd = os.getcwd()

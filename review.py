@@ -416,7 +416,9 @@ def cmd_format():
         version = subprocess.run([os.environ["CLANG_FORMAT"], "--version"], capture_output=True,
                                  text=True, check=True).stdout
         commits = request("GET", f"/repos/{UPSTREAM}/compare/{base}...{head}")["commits"]
-        git("fetch", "-q", "--no-tags", f"--depth={len(commits) + 1}", "origin", head, base)
+        # the Claude step repoints origin at the bot's own repository
+        git("fetch", "-q", "--no-tags", f"--depth={len(commits) + 1}",
+            f"https://github.com/{UPSTREAM}.git", head, base)
         use_base_configs(base)
         patched = []
         for commit in commits:
