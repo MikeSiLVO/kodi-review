@@ -1403,13 +1403,16 @@ def usage_lines(messages):
     """List each call's result size, the calls per turn, the first turn's cache use, the totals."""
     calls, lines, per_turn, first = {}, [], {}, None
     for m in messages:
-        usage = (m.get("message") or {}).get("usage")
+        message = m.get("message") if isinstance(m.get("message"), dict) else {}
+        usage = message.get("usage")
         if first is None and m.get("type") == "assistant" and usage:
             first = usage
-        content = (m.get("message") or {}).get("content")
+        content = message.get("content")
         for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict):
+                continue
             if part.get("type") == "tool_use":
-                turn = (m.get("message") or {}).get("id")
+                turn = message.get("id")
                 per_turn[turn] = per_turn.get(turn, 0) + 1
                 given = part.get("input") or {}
                 target = given.get("file_path") or given.get("path") or ""

@@ -860,6 +860,7 @@ class UsageTests(unittest.TestCase):
                 {"type": "tool_result", "tool_use_id": "u2", "content": [{"text": "x"}]}]}},
             {"type": "assistant", "message": {"id": "m2", "content": [
                 {"type": "tool_use", "id": "u3", "name": "Glob", "input": {"pattern": "*.h"}}]}},
+            {"type": "system", "message": "A notice."},
             {"type": "result", "usage": {"output_tokens": 5}, "num_turns": 2,
              "total_cost_usd": 0.1}]
         lines = review.usage_lines(messages)
