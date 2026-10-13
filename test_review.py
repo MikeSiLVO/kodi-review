@@ -213,10 +213,25 @@ class FormatTests(unittest.TestCase):
     """The clang-format check and its place in the summary."""
 
     def facts(self, *patches, checked=1):
-        """Return format.json facts with one patched commit per patch."""
+        """Return format.json facts with one patched commit per patch, applied as a whole."""
         commits = [{"sha": str(n) * 40, "subject": f"Commit {n}", "patch": patch}
                    for n, patch in enumerate(patches, 1)]
-        return {"version": "23.1.3", "checked": checked, "commits": commits}
+        return {"version": "23.1.3", "checked": checked, "commits": commits,
+                "apply": "\n".join(patches)}
+
+    def test_apply_block(self):
+        """One commit gets apply, amend and push; several get fixup advice; a fence gets none."""
+        single = review.apply_details(self.facts(PATCH))
+        self.assertTrue(single.startswith("<details><summary>Apply it</summary>\n\nFrom the "
+                                          "repository root:\n\n```bash\ngit apply --index <<'EOF'\n"
+                                          "diff --git"))
+        self.assertTrue(single.endswith("EOF\ngit commit --amend --no-edit\n"
+                                        "git push --force-with-lease\n```\n\n</details>"))
+        several = review.apply_details(self.facts(PATCH, PATCH, checked=2))
+        self.assertNotIn("--amend", several)
+        self.assertIn("`git rebase -i --autosquash`.\n\n</details>", several)
+        self.assertEqual(review.apply_details(self.facts("```\n")), "")
+        self.assertEqual(review.apply_details({"commits": []}), "")
 
     def test_line(self):
         """The line says not checked, matching, or how much clang-format would change."""
@@ -240,6 +255,7 @@ class FormatTests(unittest.TestCase):
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
         self.assertIn("1 file\n  <details><summary>clang-format changes</summary>\n\n"
                       "  ```diff\n  diff --git", text)
+        self.assertIn("  </details>\n\n  <details><summary>Apply it</summary>", text)
         self.assertIn("  ```\n\n  </details>\n- **Kodi 22:**", text)
         self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
 
@@ -307,7 +323,7 @@ class FormatTests(unittest.TestCase):
             review.cmd_format()
             facts = json.loads(Path(tmp, "format.json").read_text())
         self.assertEqual(git.call_args.args[4], f"https://github.com/{review.UPSTREAM}.git")
-        self.assertEqual(facts, {"version": "23.1.3", "checked": 1, "commits": []})
+        self.assertEqual(facts, {"version": "23.1.3", "checked": 1, "commits": [], "apply": ""})
 
     def test_base_configs(self):
         """The base branch's clang-format files replace the pull request's, and added ones go."""

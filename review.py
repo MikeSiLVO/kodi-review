@@ -596,7 +596,7 @@ def format_commit(parent, sha):
 
 
 def cmd_format():
-    """Use the base branch's clang-format files, then write each commit's patch to format.json."""
+    """Use the base's clang-format files; write per-commit and whole patches to format.json."""
     base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
     try:
         version = subprocess.run([os.environ["CLANG_FORMAT"], "--version"], capture_output=True,
@@ -615,7 +615,8 @@ def cmd_format():
                 patched.append({"sha": commit["sha"], "patch": patch,
                                 "subject": commit["commit"]["message"].partition("\n")[0]})
         facts = {"version": version.split("version", 1)[1].split()[0],
-                 "checked": len(commits), "commits": patched}
+                 "checked": len(commits), "commits": patched,
+                 "apply": format_commit(base, head) if patched else ""}
     except (OSError, KeyError, IndexError, RuntimeError, subprocess.CalledProcessError,
             urllib.error.URLError) as err:
         print(f"Formatting unavailable: {err}")
@@ -1088,7 +1089,7 @@ def status_lines(status, result):
         lines.append("**Test builds:** passing")
     formatting = format_line(status.get("format") or {})
     if formatting:
-        details = format_details(status.get("format") or {})
+        details = format_folds(status.get("format") or {})
         lines.append(formatting + "".join(f"\n  {line}" if line else "\n"
                                           for line in details.splitlines()))
     if status.get("conflicts"):
@@ -1163,6 +1164,27 @@ def format_details(facts):
     return f"<details><summary>clang-format changes</summary>\n\n{body}\n\n</details>"
 
 
+def apply_details(facts):
+    """Fold a paste block applying the whole patch, amending a lone commit; empty if none fits."""
+    patch = (facts.get("apply") or "").rstrip("\n")
+    if not patch or "```" in patch or len(patch) > FORMAT_CHAR_LIMIT:
+        return ""
+    single = facts.get("checked") == 1
+    steps = ["git apply --index <<'EOF'", patch, "EOF"]
+    if single:
+        steps += ["git commit --amend --no-edit", "git push --force-with-lease"]
+    after = "" if single else ("\n\nThen fold each change into the commit it belongs to, for "
+                               "example with `git commit --fixup` and "
+                               "`git rebase -i --autosquash`.")
+    return ("<details><summary>Apply it</summary>\n\nFrom the repository root:\n\n```bash\n"
+            + "\n".join(steps) + "\n```" + after + "\n\n</details>")
+
+
+def format_folds(facts):
+    """Join the folded patch and its paste block, either of which may be absent."""
+    return "\n\n".join(part for part in (format_details(facts), apply_details(facts)) if part)
+
+
 def format_comments():
     """Return the bot's formatting comments on the pull request, oldest first."""
     return [c for c in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments")
@@ -1172,7 +1194,7 @@ def format_comments():
 def format_text(facts, head):
     """Format the comment a format request gets: its Where it stands line, any patch, the commit."""
     parts = [format_line(facts) or "**Formatting:** not checked"]
-    details = format_details(facts)
+    details = format_folds(facts)
     if details:
         parts.append(details)
     parts.append(f"<sub>Checked up to {head[:12]}.</sub>")
