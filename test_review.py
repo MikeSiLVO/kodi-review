@@ -231,18 +231,17 @@ class FormatTests(unittest.TestCase):
                          "**Formatting:** clang-format 23.1.3 would change 3 places in 2 files")
 
     def test_summary(self):
-        """The line follows the test builds, and one commit's patch folds under the block."""
+        """The line follows the test builds, and one commit's patch folds inside its list item."""
         status = {"builds": {"count": 1, "failing": [], "pending": []},
                   "format": self.facts(PATCH)}
         self.assertEqual(block(status)[:2], [
             "**Test builds:** passing",
             "**Formatting:** clang-format 23.1.3 would change 1 place in 1 file"])
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
-        details = text.split("**Where it stands**\n")[1].split("\n\n", 1)[1]
-        self.assertTrue(details.startswith(
-            "<details><summary>clang-format changes</summary>\n\n```diff\ndiff --git"))
-        self.assertTrue(details.endswith(
-            "```\n\n</details>\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
+        self.assertIn("1 file\n  <details><summary>clang-format changes</summary>\n\n"
+                      "  ```diff\n  diff --git", text)
+        self.assertIn("  ```\n\n  </details>\n- **Kodi 22:**", text)
+        self.assertTrue(text.endswith("\n\n<sub>Reviewed up to ffffffffffff.</sub>"))
 
     def test_labels_and_cut(self):
         """Several commits are labeled, and lines past the size limit are counted, not shown."""
@@ -501,6 +500,17 @@ class SettledVerdictTests(unittest.TestCase):
         self.assertEqual(self.settle("Merge after small fixes"), "Ready to merge")
         self.assertEqual(self.settle("Merge after small fixes", ["Minor", "Moderate"]),
                          "Needs more work")
+
+    def test_ready_waits_on_formatting(self):
+        """Ready to merge waits on a formatting patch, named before failing builds."""
+        patched = {"commits": [{"sha": "a" * 40, "patch": "x"}]}
+        self.assertEqual(self.settle("Ready to merge", status={"format": patched}),
+                         "Ready to merge once formatted")
+        self.assertEqual(self.settle("Ready to merge", status={
+            "format": patched, "builds": {"failing": ["Jenkins"]}}),
+            "Ready to merge once formatted and the test builds pass")
+        self.assertEqual(self.settle("Ready to merge", status={"format": {"commits": []}}),
+                         "Ready to merge")
 
     def test_ready_waits_on_builds(self):
         """Ready to merge waits on failing builds; passing ones add nothing."""

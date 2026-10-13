@@ -1088,7 +1088,9 @@ def status_lines(status, result):
         lines.append("**Test builds:** passing")
     formatting = format_line(status.get("format") or {})
     if formatting:
-        lines.append(formatting)
+        details = format_details(status.get("format") or {})
+        lines.append(formatting + "".join(f"\n  {line}" if line else "\n"
+                                          for line in details.splitlines()))
     if status.get("conflicts"):
         lines.append(f"**Conflicts:** yes, needs a rebase onto {status['base']}")
     if status.get("label_problems"):
@@ -1214,7 +1216,7 @@ def place_findings(findings, lines):
 
 
 def settled_verdict(result, status):
-    """Return the verdict matched to findings; a ready one waits on failing builds or conflicts."""
+    """Return the verdict matched to findings; ready waits on format, failing builds, conflicts."""
     verdict, findings = result["verdict"], result["findings"]
     if verdict == "Ready to merge" and findings:
         minor = all(f["severity"] == "Minor" for f in findings)
@@ -1225,7 +1227,8 @@ def settled_verdict(result, status):
         verdict = "Needs more work"
     if verdict == "Ready to merge":
         waits = [wait for wait, blocked in
-                 (("the test builds pass", (status.get("builds") or {}).get("failing")),
+                 (("formatted", (status.get("format") or {}).get("commits")),
+                  ("the test builds pass", (status.get("builds") or {}).get("failing")),
                   ("the conflicts are resolved", status.get("conflicts"))) if blocked]
         if waits:
             verdict += " once " + " and ".join(waits)
@@ -1253,10 +1256,7 @@ def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
     parts.append("---")
     lines = status_lines(status, result)
     parts.append("**Where it stands**\n" + "\n".join(f"- {line}" for line in lines))
-    details = format_details(status.get("format") or {})
-    if details:
-        parts.append(details)
-    scope =" (changes since the last review only)" if rerun else ""
+    scope = " (changes since the last review only)" if rerun else ""
     footer = f"Reviewed up to {head[:12]}{scope}."
     if status.get("knowledge"):
         footer += f" Kodi context: {', '.join(status['knowledge'])}."
