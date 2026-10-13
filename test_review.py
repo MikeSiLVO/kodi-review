@@ -246,13 +246,15 @@ class FormatTests(unittest.TestCase):
                          "**Formatting:** clang-format 23.1.3 would change 3 places in 2 files")
 
     def test_summary(self):
-        """The line follows the test builds, and one commit's patch folds inside its list item."""
+        """The line follows the test builds; one commit's patch folds under it and opens Next."""
         status = {"builds": {"count": 1, "failing": [], "pending": []},
                   "format": self.facts(PATCH)}
         self.assertEqual(block(status)[:2], [
             "**Test builds:** passing",
             "**Formatting:** clang-format 23.1.3 would change 1 place in 1 file"])
         text = review.summary_text(RESULT, status, "f" * 40, [], False)
+        self.assertIn("- **Next:** The author applies the formatting patch above. "
+                      "A team member merges it.", text)
         self.assertIn("1 file\n  <details><summary>clang-format changes</summary>\n\n"
                       "  ```diff\n  diff --git", text)
         self.assertIn("  </details>\n\n  <details><summary>Apply it</summary>", text)

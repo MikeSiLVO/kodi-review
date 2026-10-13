@@ -1098,7 +1098,9 @@ def status_lines(status, result):
         lines.append("**Labels:** " + ", ".join(status["label_problems"]))
     lines.append(f"**Kodi 22:** {result['kodi22']}. {result['kodi22_reason']}"
                  + backport_text(status.get("backport")))
-    lines.append(f"**Next:** {result['next_step']}")
+    patch = "The author applies the formatting patch above. " if (
+        status.get("format") or {}).get("commits") else ""
+    lines.append(f"**Next:** {patch}{result['next_step']}")
     if status.get("unavailable"):
         lines.append("**Unavailable:** " + ", ".join(status["unavailable"]))
     return lines
