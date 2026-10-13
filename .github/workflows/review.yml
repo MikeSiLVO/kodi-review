@@ -32,7 +32,7 @@ on:
         required: false
         type: string
       mode:
-        description: "Set by the relay: review (one queue), answer (a queue per comment) or format (own queue, no model)"
+        description: "Set by the relay: review (one queue), answer or help (a queue per comment) or format (own queue, no model)"
         required: false
         type: string
       source:
@@ -42,8 +42,9 @@ on:
 
 concurrency:
   group: >-
-    kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.mode == 'answer' && inputs.comment
-    || inputs.mode == 'format' && 'format' || 'review' }}
+    kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ (inputs.mode == 'answer'
+    || inputs.mode == 'help') && inputs.comment || inputs.mode == 'format' && 'format'
+    || 'review' }}
   cancel-in-progress: false
 
 env:
@@ -95,8 +96,14 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: python3 bot/review.py trigger
 
+      - name: Post the list of commands
+        if: inputs.mode == 'help'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: python3 bot/review.py help
+
   review:
-    if: github.repository_owner == 'MikeSiLVO'
+    if: github.repository_owner == 'MikeSiLVO' && inputs.mode != 'help'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -198,6 +205,8 @@ jobs:
               "repos/$UPSTREAM/contents/$rules?ref=$BASE_SHA" > "$out" || rm -f "$out"
           done
           python3 "$BOT/review.py" piers
+          python3 "$BOT/review.py" tests || echo "Tests unavailable"
+          python3 "$BOT/review.py" knowledge || echo "Knowledge unavailable"
           if [ "$MODE" = answer ]; then
             cat "$BOT/ANSWER.md" "$BOT/REVIEW.md" > "$RUNNER_TEMP/instructions.md"
             echo "schema=$(jq -c . "$BOT/answer.json")" >> "$GITHUB_OUTPUT"

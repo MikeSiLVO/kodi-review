@@ -110,27 +110,35 @@ class LabelTests(unittest.TestCase):
     """The upstream mergeable rules."""
 
     def test_ready(self):
-        """A milestone and a version label with nothing blocking are ready."""
-        self.assertEqual(review.label_problems("Fix", ["v23 Q*", "Type: Fix"], "Q* 23.0"), [])
+        """A milestone, a version label and an area label with nothing blocking are ready."""
+        labels = ["v23 Q*", "Component: Video"]
+        self.assertEqual(review.label_problems("Fix", labels, "Q* 23.0"), [])
 
     def test_infrastructure_counts_as_version(self):
         """An Infrastructure label counts as a version label, leaving no problem to report."""
-        self.assertEqual(review.label_problems("Fix", ["Infrastructure"], "Q* 23.0"), [])
+        labels = ["Infrastructure", "Platform: Linux"]
+        self.assertEqual(review.label_problems("Fix", labels, "Q* 23.0"), [])
 
     def test_missing_milestone_and_version(self):
         """No milestone and no version label are both reported."""
-        self.assertEqual(review.label_problems("Fix", ["Type: Fix"], None),
+        self.assertEqual(review.label_problems("Fix", ["Component: Video"], None),
                          ["no milestone", "no version label"])
 
     def test_abandoned_milestone(self):
         """An Abandoned milestone does not count."""
-        self.assertEqual(review.label_problems("Fix", ["v23 Q*"], "Abandoned"),
+        self.assertEqual(review.label_problems("Fix", ["v23 Q*", "Component: Video"], "Abandoned"),
                          ["milestone Abandoned"])
 
     def test_blocking_label_and_title_tag(self):
         """Only an exact blocking label blocks, and a title tag is reported."""
-        self.assertEqual(review.label_problems("[WIP] Fix", ["v23 Q*", "WIP", "WIP: later"], "Q*"),
+        labels = ["v23 Q*", "Component: Video", "WIP", "WIP: later"]
+        self.assertEqual(review.label_problems("[WIP] Fix", labels, "Q*"),
                          ["labeled WIP", "[WIP] in title"])
+
+    def test_missing_area_label(self):
+        """A missing Component or Platform label is reported."""
+        self.assertEqual(review.label_problems("Fix", ["v23 Q*", "Type: Fix"], "Q* 23.0"),
+                         ["no Component or Platform label"])
 
 
 class RenderTests(unittest.TestCase):
@@ -312,6 +320,151 @@ class FormatTests(unittest.TestCase):
                 os.chdir(cwd)
 
 
+VIDEO_KB = "\n".join((
+    "---", "labels: Component: Video, Component: Database",
+    "paths: xbmc/video/** xbmc/VideoDatabase*", "tags: video, videolibrary",
+    "content: CVideoDatabase", "summary: The video library.", "---",
+    "- trap: Deleted ids come back. | check: ids held across a clean. | at: `xbmc/video/A.cpp:F`",
+    ""))
+THREADS_KB = "\n".join((
+    "---", "labels:", "paths: xbmc/threads/**", "tags:", "content: CCriticalSection|std::mutex",
+    "summary: Locks and threads.", "---",
+    "- invariant: Never wait on the main thread holding a lock. | check: waits under a lock.", ""))
+KB_DIFF = ("diff --git a/xbmc/video/Scan.cpp b/xbmc/video/Scan.cpp\n--- a/xbmc/video/Scan.cpp\n"
+           "+++ b/xbmc/video/Scan.cpp\n@@ -1 +1 @@\n-int a;\n+std::mutex m;\n")
+
+
+class KnowledgeTests(unittest.TestCase):
+    """Picking the Kodi knowledge a review loads."""
+
+    def files(self, tmp):
+        """Write the two sample knowledge files and an index, then read them back."""
+        root = Path(tmp)
+        (root / "video").mkdir()
+        (root / "video" / "library.md").write_text(VIDEO_KB)
+        (root / "threads.md").write_text(THREADS_KB)
+        (root / "INDEX.md").write_text("Kodi is a media center.\n")
+        return review.knowledge_files(root)
+
+    def test_headers(self):
+        """Each file's header is read apart from its body; the index stays out of the routing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = {f["name"]: f for f in self.files(tmp)}
+        self.assertEqual(sorted(files), ["threads", "video/library"])
+        video = files["video/library"]
+        self.assertEqual(video["labels"], ["Component: Video", "Component: Database"])
+        self.assertEqual(video["paths"], ["xbmc/video/**", "xbmc/VideoDatabase*"])
+        self.assertEqual(video["tags"], ["video", "videolibrary"])
+        self.assertTrue(video["body"].startswith("- trap: Deleted ids come back."))
+        self.assertEqual(files["threads"]["labels"], [])
+
+    def test_title_words(self):
+        """Bracket tags and a leading prefix both count, in lower case."""
+        self.assertEqual(review.title_words("[Video][VideoInfoScanner] Fix a scan"),
+                         {"video", "videoinfoscanner"})
+        self.assertEqual(review.title_words("RetroPlayer: Fix rewind"), {"retroplayer"})
+        self.assertEqual(review.title_words("Fix a scan"), set())
+
+    def test_matches(self):
+        """A label, a changed path, a title tag and code in the diff each select a file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self.files(tmp)
+        matches = review.knowledge_matches(files, ["Component: Video"], "[Video] x", KB_DIFF)
+        self.assertEqual(matches, {"video/library": {"why": ["label", "path", "title"], "hits": 2},
+                                   "threads": {"why": ["code"], "hits": 1}})
+        self.assertEqual(review.knowledge_matches(files, [], "Fix", "diff --git a/b b/b\n"), {})
+
+    def test_limit_and_listing(self):
+        """Stronger matches load first, and a file past the limit is listed with the rest."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self.files(tmp)
+        matches = {"threads": {"why": ["code"], "hits": 9},
+                   "video/library": {"why": ["label", "path"], "hits": 2}}
+        video = next(f for f in files if f["name"] == "video/library")
+        listing = sum(len(f"- {f['name']}.md: {f['summary']}") + 1 for f in files)
+        block = len(f"## video/library\n{video['summary']}\n\n{video['body']}")
+        room = len("Kodi.") + listing + 200 + block + len("video/library") * 2 + 25
+        with mock.patch.object(review, "KNOWLEDGE_LIMIT", room):
+            text, loaded = review.knowledge_text(files, matches, "Kodi.")
+        self.assertEqual(loaded, ["video/library"])
+        self.assertIn("Loaded for this pull request: video/library (label, path).", text)
+        self.assertIn("in .kodi-review-run/knowledge/:\n- threads.md: Locks and threads.", text)
+        self.assertIn("## video/library\nThe video library.\n\n- trap: Deleted ids", text)
+
+    def test_hits_break_ties(self):
+        """Among matches of equal strength, the one more changed lines hit loads first."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self.files(tmp)
+        matches = {"video/library": {"why": ["path"], "hits": 2},
+                   "threads": {"why": ["code"], "hits": 9}}
+        self.assertEqual(review.knowledge_text(files, matches, "Kodi.")[1],
+                         ["threads", "video/library"])
+
+    def test_command(self):
+        """The command writes the knowledge, copies every file, and records what it loaded."""
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as kb:
+            self.files(kb)
+            run = Path(tmp)
+            (run / "pr.json").write_text(json.dumps({"title": "[Video] Fix a scan"}))
+            (run / "status.json").write_text(json.dumps({"labels": []}))
+            (run / "full.diff").write_text(KB_DIFF)
+            with mock.patch.object(review, "RUN_DIR", run), \
+                    mock.patch.object(review, "KNOWLEDGE_DIR", Path(kb)):
+                review.cmd_knowledge()
+            text = (run / "knowledge.md").read_text()
+            status = json.loads((run / "status.json").read_text())
+            copied = (run / "knowledge" / "threads.md").read_text()
+        self.assertTrue(text.startswith("Kodi is a media center.\n\nLoaded for this pull request: "
+                                        "video/library (path, title), threads (code)."))
+        self.assertEqual(status["knowledge"], ["video/library", "threads"])
+        self.assertTrue(copied.startswith("Locks and threads.\n\n- invariant:"))
+
+    def test_version_tags(self):
+        """Only lines for a later version drop; earlier ones, untagged ones or no version keep."""
+        body = "\n".join(("- trap: all.", "- trap [22]: piers.", "- invariant [23+]: master."))
+        self.assertEqual(review.for_version(body, 22), "- trap: all.\n- trap [22]: piers.")
+        self.assertEqual(review.for_version(body, 23), body)
+        self.assertEqual(review.for_version(body, None), body)
+
+    def test_kodi_major(self):
+        """The major version comes from version.txt, and is None without one."""
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                self.assertIsNone(review.kodi_major())
+                Path("version.txt").write_text("APP_NAME Kodi\nVERSION_MAJOR 23\nVERSION_MINOR 0\n")
+                self.assertEqual(review.kodi_major(), 23)
+            finally:
+                os.chdir(cwd)
+
+    def test_footer(self):
+        """The summary names the knowledge the review loaded."""
+        text = review.summary_text(RESULT, {"knowledge": ["video/library"]}, "f" * 40, [], False)
+        self.assertTrue(text.endswith("Reviewed up to ffffffffffff. Kodi context: video/library."
+                                      "</sub>"))
+
+    def test_tests_listing(self):
+        """Test files that include a touched header are listed; others are not."""
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                review.git("init", "-q")
+                Path("xbmc/video/test").mkdir(parents=True)
+                Path("xbmc/video/test/TestScan.cpp").write_text('#include "video/Scan.h"\n')
+                Path("xbmc/video/test/TestOther.cpp").write_text('#include "video/Other.h"\n')
+                review.git("add", "-A")
+                Path(".kodi-review-run").mkdir()
+                Path(".kodi-review-run/full.diff").write_text(KB_DIFF)
+                with mock.patch.object(review, "RUN_DIR", Path(".kodi-review-run")):
+                    review.cmd_tests()
+                listed = Path(".kodi-review-run/tests.txt").read_text()
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(listed, "xbmc/video/test/TestScan.cpp\n")
+
+
 class SettledVerdictTests(unittest.TestCase):
     """The verdict corrected to agree with the findings and the status."""
 
@@ -325,9 +478,11 @@ class SettledVerdictTests(unittest.TestCase):
         self.assertEqual(self.settle("Ready to merge", ["Minor"]), "Merge after small fixes")
         self.assertEqual(self.settle("Ready to merge", ["Minor", "Moderate"]), "Needs more work")
 
-    def test_small_fixes_without_findings(self):
-        """Merge after small fixes with no findings becomes Ready to merge."""
+    def test_small_fixes(self):
+        """Merge after small fixes needs findings, all of them Minor."""
         self.assertEqual(self.settle("Merge after small fixes"), "Ready to merge")
+        self.assertEqual(self.settle("Merge after small fixes", ["Minor", "Moderate"]),
+                         "Needs more work")
 
     def test_ready_waits_on_builds(self):
         """Ready to merge waits on failing builds; passing ones add nothing."""
@@ -495,18 +650,25 @@ class DiscussionTests(unittest.TestCase):
                 "in_reply_to_id": reply_to}
 
     def test_people_and_bot_claims(self):
-        """People's comments stay, newest first, with other bots' line comments marked as claims."""
+        """People's comments stay, newest first, with replies, claims and own findings marked."""
         comments = [
             self.comment(1, "bot", "Bot", "2026-01-01T00:00:00Z", "Throttle this.", "a.cpp"),
             self.comment(2, "dev", "User", "2026-01-02T00:00:00Z", "Not needed.", "a.cpp", 1),
             self.comment(3, "bot", "Bot", "2026-01-03T00:00:00Z", "Unanswered.", "b.cpp"),
             self.comment(4, "author", "User", "2026-01-04T00:00:00Z", "Intentional."),
+            self.comment(5, review.BOT_LOGIN, "Bot", "2026-01-05T00:00:00Z", "**Minor: Ours**",
+                         "c.cpp"),
+            self.comment(6, "dev", "User", "2026-01-06T00:00:00Z", "Fixing.", "c.cpp", 5),
         ]
-        claim = review.CLAIM_LABEL
+        claim, own = review.CLAIM_LABEL, review.OWN_LABEL
         self.assertEqual(review.discussion_text(comments),
+                         "Newest first. Each entry: login, date, and file:line for a line "
+                         "comment.\n\n"
+                         f"dev, 2026-01-06, c.cpp:7, replying to {review.BOT_LOGIN}\nFixing.\n\n"
+                         f"{review.BOT_LOGIN}{own}, 2026-01-05, c.cpp:7\n**Minor: Ours**\n\n"
                          "author, 2026-01-04\nIntentional.\n\n"
                          f"bot{claim}, 2026-01-03, b.cpp:7\nUnanswered.\n\n"
-                         "dev, 2026-01-02, a.cpp:7\nNot needed.\n\n"
+                         "dev, 2026-01-02, a.cpp:7, replying to bot\nNot needed.\n\n"
                          f"bot{claim}, 2026-01-01, a.cpp:7\nThrottle this.\n")
 
     def test_bot_claims_are_trimmed_and_addressed_or_own_ones_dropped(self):
@@ -520,14 +682,16 @@ class DiscussionTests(unittest.TestCase):
                          "a.cpp"),
             self.comment(4, "rabbit", "Bot", "2026-01-04T00:00:00Z",
                          "Old.\n\n✅ Confirmed as addressed by @dev", "a.cpp")]
-        self.assertEqual(review.discussion_text(comments),
+        self.assertEqual(review.discussion_text(comments).split("\n\n", 1)[1],
                          f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
 
     def test_cap(self):
-        """Older comments past the size cap are left out."""
+        """Older comments past the size cap are left out, and the cut is marked."""
         comments = [self.comment(i, "dev", "User", f"2026-01-{i + 1:02}T00:00:00Z", "x" * 9000)
                     for i in range(5)]
-        self.assertEqual(review.discussion_text(comments).count("dev, "), 2)
+        text = review.discussion_text(comments)
+        self.assertEqual(text.count("dev, "), 2)
+        self.assertTrue(text.endswith("Older comments are cut here.\n"))
 
 
 class PriorTests(unittest.TestCase):
@@ -559,7 +723,8 @@ class PriorTests(unittest.TestCase):
         self.assertEqual([(f["id"], f["status"]) for f in found],
                          [("T1", "open"), ("T2", "resolved"), ("T3", "open"), ("T6", "fixed"),
                           ("T7", "accepted")])
-        self.assertEqual({f["finding"] for f in found}, {"**Minor: Found**"})
+        self.assertEqual({f["finding"] for f in found},
+                         {"**Minor: Found**", "**Minor: Found**\n\nDetail."})
         self.assertEqual(found[0]["comment"], 11)
 
     def test_post_marks_listed_only(self):
@@ -727,12 +892,16 @@ class TrimTests(unittest.TestCase):
         self.assertEqual(review.body_as_of(edits, "2026-10-11T17:00:00Z", "Now."), "First.")
         self.assertEqual(review.body_as_of([], "2026-10-11T23:00:00Z", "Now."), "Now.")
 
-    def test_prior_finding_first_line(self):
-        """An earlier finding keeps only its first line."""
-        thread = {"id": "T1", "isResolved": False, "path": "a.cpp", "line": 2,
-                  "comments": {"nodes": [{"author": {"login": "kodi-review", "__typename": "Bot"},
-                                          "body": "**Serious: Breaks**\n\nLong detail."}]}}
-        self.assertEqual(review.earlier_findings([thread])[0]["finding"], "**Serious: Breaks**")
+    def test_prior_finding_text(self):
+        """An earlier finding keeps its title and problem, not its fix or folding."""
+        body = "**Serious: Breaks**\n\nLong detail.\n\n**Fix:** Change it."
+        folded = review.fold_finding(review.WITHDRAWN_NOTE.format("Wrong."), body)
+        threads = [{"id": tid, "isResolved": False, "path": "a.cpp", "line": 2,
+                    "comments": {"nodes": [{"author": {"login": "kodi-review",
+                                                       "__typename": "Bot"}, "body": text}]}}
+                   for tid, text in (("T1", body), ("T2", folded))]
+        self.assertEqual([f["finding"] for f in review.earlier_findings(threads)],
+                         ["**Serious: Breaks**\n\nLong detail."] * 2)
 
 
 class TriggerTests(unittest.TestCase):
@@ -783,12 +952,16 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
 
     def test_anything_but_review_is_a_question(self):
-        """Review or nothing after the mention asks for a review; other words ask a question."""
+        """Only a comment opening with the mention and review or nothing asks for a review."""
         for body, mode in (("@kodi-review: Review again", "review"),
                            ("@kodi-review reviewed this?", "answer"),
                            ("Hey @kodi-review, is the lock needed?", "answer"),
                            ("@kodi-review", "review"),
-                           ("@kodi-review!", "review")):
+                           ("@kodi-review!", "review"),
+                           ("> Quoted.\n\n@kodi-review", "review"),
+                           ("Thanks @kodi-review", "answer"),
+                           ("cc @kodi-review", "answer"),
+                           ("Thanks @kodi-review format", "answer")):
             other = "answer" if mode == "review" else "review"
             self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
             calls, code = self.run_trigger(self.comment(body=body), mode=other)
@@ -802,6 +975,27 @@ class TriggerTests(unittest.TestCase):
                            ("@kodi-review clang", "format"),
                            ("@kodi-review format this?", "answer")):
             self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+
+    def test_help_needs_a_writer_and_gets_no_reaction(self):
+        """Help alone after the mention asks for the command list, from writers, with no 👀."""
+        for body in ("@kodi-review help", "@kodi-review: Help?"):
+            calls, code = self.run_trigger(self.comment(body=body), mode="help")
+            self.assertIsNone(code, body)
+            self.assertNotIn("POST", [method for method, _ in calls])
+        self.assertTrue(self.run_trigger(self.comment(body="@kodi-review help me"),
+                                         mode="help")[1])
+        self.assertTrue(self.run_trigger(self.comment(body="@kodi-review help"), access="read",
+                                         mode="help")[1])
+
+    def test_help_is_posted_where_it_was_asked(self):
+        """The command list replies in a line comment's thread, or in the conversation."""
+        body = review.HELP_FILE.read_text().strip()
+        for asker, path in (("review/5", f"/repos/{review.REPO}/pulls/7/comments/5/replies"),
+                            ("issue/5", f"/repos/{review.REPO}/issues/7/comments")):
+            with mock.patch.object(review, "request") as req, \
+                    mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7"}):
+                review.cmd_help()
+            self.assertEqual([c.args for c in req.call_args_list], [("POST", path, {"body": body})])
 
     def test_anyone_may_ask_for_formatting_once_per_head(self):
         """A format request needs no write access, and is refused once the head has its check."""
@@ -1224,6 +1418,19 @@ class FollowUpTests(unittest.TestCase):
                                                      "RESULT": json.dumps(result)}):
                     review.cmd_reply()
                 self.assertEqual([c.args for c in req.call_args_list], expected)
+
+    def test_mention_that_asks_nothing_gets_a_thumbs_up(self):
+        """A mention that only thanks gets a thumbs-up on the conversation comment and no text."""
+        thumbs = ("POST", f"/repos/{review.REPO}/issues/comments/6/reactions", {"content": "+1"})
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "question.json").write_text(
+                json.dumps({"kind": "issue", "comment": 6, "finding": None}))
+            with mock.patch.object(review, "RUN_DIR", Path(tmp)), \
+                    mock.patch.object(review, "request") as req, \
+                    mock.patch.dict(os.environ, {"FORK_PR": "7", "SOURCE": "mention", "RESULT":
+                                                 json.dumps({"reply": "", "acknowledge": True})}):
+                review.cmd_reply()
+            self.assertEqual([c.args for c in req.call_args_list], [thumbs])
 
     def test_earlier_kodi22_comes_from_the_last_summary(self):
         """A re-review gets the last summary's Kodi 22 line; a first review gets none."""

@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,16 @@ CALLERS_LINE_LIMIT = 150
 FORMAT_EXTENSIONS = "c,cc,cpp,cxx,h,hh,hpp,hxx,inl,m,mm"
 FORMAT_CONFIGS = (".clang-format", ".clang-format-ignore")
 FORMAT_CHAR_LIMIT = 20_000
+KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
+HELP_FILE = Path(__file__).resolve().parent / "HELP.md"
+KNOWLEDGE_LIMIT = 38_000
+KNOWLEDGE_HEADER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+TITLE_TAG = re.compile(r"\[([^\]]+)\]")
+TITLE_PREFIX = re.compile(r"^\s*([A-Za-z][\w/+-]*):\s")
+AREA_LABEL = re.compile(r"^(Component|Platform):")
+VERSION_TAG = re.compile(r"^- [a-z]+ \[(\d+)(\+?)\]:")
+VERSION_MAJOR = re.compile(r"^VERSION_MAJOR (\d+)", re.M)
+TESTS_LIMIT = 30
 DISCUSSION_LIMIT = 25_000
 REQUIRED = ("summary", "verdict", "kodi22", "kodi22_reason", "next_step", "findings")
 BLOCKING_LABEL = re.compile(r"^(Don't merge|On hold|No Jenkins|RFC|WIP)$")
@@ -79,7 +90,7 @@ FIXED_NOTE = "**Fixed in `{}`.**\n\n"
 WITHDRAWN_NOTE = "**Withdrawn:** {}\n\n"
 ACCEPTED_NOTE = "**Accepted by {}:** {}\n\n"
 SETTLED = re.compile(r"^\*\*(Fixed in|Withdrawn:|Accepted by)[^\n]*\n\n"
-                     r"(\*\*(?:Serious|Moderate|Minor)\b.*)")
+                     r"(\*\*(?:Serious|Moderate|Minor)\b.*)", re.S)
 SETTLED_STATUS = {"Fixed in": "fixed", "Withdrawn:": "withdrawn", "Accepted by": "accepted"}
 NO_ANSWER = "I could not finish an answer. Ask again."
 RESOLVE_NOTE = "I can't resolve threads, so this one is yours to close."
@@ -90,12 +101,15 @@ INNER_DETAILS = re.compile(r"<details>(?:(?!<details>).)*?</details>", re.S)
 HTML_TAG = re.compile(r"<[^>]+>")
 CLAIM_LIMIT = 1500
 ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
-CLAIM_LABEL = " (another reviewer's claim to check)"
+CLAIM_LABEL = " (another review bot's claim to check)"
+OWN_LABEL = " (your earlier finding)"
+PRIOR_LIMIT = 600
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
+HELP_ASK = re.compile(r"[\s,:.!]*help[\s,:.!?]*$", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
-             "callers.txt", "original.diff", "new.diff", "full.diff")
+             "callers.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
@@ -225,6 +239,147 @@ def cmd_callers():
     (RUN_DIR / "callers.txt").write_text("\n".join(lines).rstrip() + "\n" if lines else "")
 
 
+def knowledge_files(root):
+    """Read each knowledge file's header and entries, skipping the index and headerless ones."""
+    files = []
+    for path in sorted(root.rglob("*.md")):
+        text = path.read_text(errors="replace")
+        header = KNOWLEDGE_HEADER.match(text)
+        if path.name == "INDEX.md" or not header:
+            continue
+        fields = dict(line.split(":", 1) for line in header[1].splitlines() if ":" in line)
+        labels, tags = (fields.get(key, "").split(",") for key in ("labels", "tags"))
+        files.append({"name": path.relative_to(root).with_suffix("").as_posix(),
+                      "labels": [v.strip() for v in labels if v.strip()],
+                      "paths": fields.get("paths", "").split(),
+                      "tags": [v.strip().lower() for v in tags if v.strip()],
+                      "content": fields.get("content", "").strip(),
+                      "summary": fields.get("summary", "").strip(),
+                      "body": text[header.end():].strip()})
+    return files
+
+
+def kodi_major():
+    """Return the checkout's Kodi major version, or None when version.txt does not give one."""
+    try:
+        found = VERSION_MAJOR.search(Path("version.txt").read_text(errors="replace"))
+    except OSError:
+        return None
+    return int(found[1]) if found else None
+
+
+def for_version(body, major):
+    """Keep the entry lines that hold on a Kodi major version or an earlier one."""
+    kept = []
+    for line in body.splitlines():
+        tag = VERSION_TAG.match(line)
+        if tag and tag[2] and major and major < int(tag[1]):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def title_words(title):
+    """Return the lowercase area words a title carries in brackets or as a prefix."""
+    words = {t.strip().lower() for t in TITLE_TAG.findall(title)}
+    prefix = TITLE_PREFIX.match(title)
+    return words | ({prefix[1].lower()} if prefix else set())
+
+
+def changed_lines(text):
+    """Return the lines a diff adds or removes, without their +/- marks."""
+    return [line[1:] for line in text.splitlines()
+            if line[:1] in "+-" and not line.startswith(("+++", "---"))]
+
+
+def knowledge_matches(files, labels, title, diff):
+    """Map each knowledge file the pull request reaches to why, and how many changed lines hit."""
+    sections = [(path, len(changed_lines(diff[start:end])))
+                for start, end, path in diff_sections(diff)]
+    touched = changed_lines(diff)
+    words = title_words(title)
+    matches = {}
+    for f in files:
+        why, hits = [], 0
+        if set(f["labels"]) & set(labels):
+            why.append("label")
+        in_paths = [n for path, n in sections if any(fnmatch(path, g) for g in f["paths"])]
+        if in_paths:
+            why.append("path")
+            hits += sum(in_paths)
+        if words & set(f["tags"]):
+            why.append("title")
+        code = sum(1 for line in touched if re.search(f["content"], line)) if f["content"] else 0
+        if code:
+            why.append("code")
+            hits += code
+        if why:
+            matches[f["name"]] = {"why": why, "hits": hits}
+    return matches
+
+
+def knowledge_text(files, matches, index):
+    """Assemble the index, the strongest matches within the size limit, and the rest listed."""
+    rank = {"label": 3, "path": 3, "code": 3, "title": 1}
+    chosen = sorted(matches, key=lambda n: (-sum(rank[w] for w in matches[n]["why"]),
+                                            -matches[n]["hits"]))
+    listing = {f["name"]: f"- {f['name']}.md: {f['summary']}" for f in files}
+    by_name = {f["name"]: f for f in files}
+    loaded, parts = [], []
+    used = len(index) + sum(len(line) + 1 for line in listing.values()) + 200
+    for name in chosen:
+        block = f"## {name}\n{by_name[name]['summary']}\n\n{by_name[name]['body']}"
+        if used + len(block) + len(name) * 2 + 20 > KNOWLEDGE_LIMIT:
+            continue
+        loaded.append(name)
+        parts.append(block)
+        used += len(block) + len(name) * 2 + 20
+    rest = [line for name, line in listing.items() if name not in loaded]
+    head = [index.strip(), "Loaded for this pull request: " + (", ".join(
+        f"{name} ({', '.join(matches[name]['why'])})" for name in loaded) or "none") + "."]
+    if rest:
+        head.append("Other areas, not loaded, in .kodi-review-run/knowledge/:\n" + "\n".join(rest))
+    return "\n\n".join(head + parts) + "\n", loaded
+
+
+def cmd_knowledge():
+    """Write matched knowledge to knowledge.md, copy every file, and record the loaded names."""
+    major = kodi_major()
+    files = [dict(f, body=for_version(f["body"], major)) for f in knowledge_files(KNOWLEDGE_DIR)]
+    if not files:
+        return
+    facts = json.loads((RUN_DIR / "pr.json").read_text())
+    status = load_status()
+    diff = (RUN_DIR / "full.diff").read_text(errors="replace")
+    matches = knowledge_matches(files, status.get("labels") or [], facts["title"], diff)
+    index_file = KNOWLEDGE_DIR / "INDEX.md"
+    index = index_file.read_text() if index_file.exists() else ""
+    text, loaded = knowledge_text(files, matches, index)
+    (RUN_DIR / "knowledge.md").write_text(text)
+    for f in files:
+        target = RUN_DIR / "knowledge" / f"{f['name']}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{f['summary']}\n\n{f['body']}\n")
+    if status:
+        (RUN_DIR / "status.json").write_text(json.dumps(dict(status, knowledge=loaded), indent=1)
+                                             + "\n")
+
+
+def cmd_tests():
+    """Write the test files that include a header the diff touches to tests.txt."""
+    diff = (RUN_DIR / "full.diff").read_text(errors="replace")
+    headers = sorted({Path(path).stem + ".h" for _, _, path in diff_sections(diff)
+                      if any(Path(path).match(glob) for glob in SOURCES)})
+    if not headers:
+        return
+    pattern = [a for header in headers for a in ("-e", f"/{header}\"")]
+    found = subprocess.run(["git", "grep", "-l", "-F", *pattern, "--", ":(glob)**/test/**"],
+                           capture_output=True, text=True, check=False).stdout.split()
+    lines = found[:TESTS_LIMIT] + ([f"{len(found) - TESTS_LIMIT} more"]
+                                   if len(found) > TESTS_LIMIT else [])
+    (RUN_DIR / "tests.txt").write_text("\n".join(lines) + "\n" if lines else "")
+
+
 def git(*args):
     """Run git in the pull request checkout and return its output."""
     return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
@@ -296,7 +451,7 @@ def body_as_of(edits, cutoff, current):
 
 
 def cmd_pr():
-    """Write title, description and target to pr.json, a replay's description as of its commit."""
+    """Write title, description, commit messages and target to pr.json, as of a replay's head."""
     pr = request("GET", f"/repos/{UPSTREAM}/pulls/{os.environ['UPSTREAM_PR']}")
     body = pr["body"]
     if os.environ.get("REPLAY_SHA"):
@@ -305,7 +460,10 @@ def cmd_pr():
         data = graphql(BODY_EDITS_QUERY, owner=owner, name=name, number=pr["number"])
         edits = data["repository"]["pullRequest"]["userContentEdits"]["nodes"]
         body = body_as_of(edits, commit["commit"]["committer"]["date"], body)
+    span = f"{os.environ['BASE_SHA']}...{os.environ['HEAD_SHA']}"
+    commits = request("GET", f"/repos/{UPSTREAM}/compare/{span}")["commits"]
     facts = {"number": pr["number"], "title": pr["title"], "body": trimmed_body(body),
+             "commits": [c["commit"]["message"].strip() for c in commits],
              "author": pr["user"]["login"], "target": pr["base"]["ref"], "state": pr["state"],
              "draft": pr["draft"]}
     RUN_DIR.mkdir(exist_ok=True)
@@ -326,7 +484,7 @@ def pr_state(pr):
 
 
 def label_problems(title, labels, milestone):
-    """List the milestone, label and title rules the upstream mergeable check fails on."""
+    """List the mergeable check's milestone, label and title failures, and a missing area label."""
     problems = []
     if not milestone:
         problems.append("no milestone")
@@ -334,6 +492,8 @@ def label_problems(title, labels, milestone):
         problems.append("milestone Abandoned")
     if not any(re.search(r"^v|Infrastructure", name) for name in labels):
         problems.append("no version label")
+    if not any(AREA_LABEL.match(name) for name in labels):
+        problems.append("no Component or Platform label")
     problems += [f"labeled {name}" for name in labels if BLOCKING_LABEL.match(name)]
     tag = re.search(r"\[(RFC|WIP)\]", title)
     if tag:
@@ -534,16 +694,25 @@ def discussion_text(comments):
     entries, size = [], 0
     for c in sorted(kept.values(), key=lambda c: c["created_at"], reverse=True):
         where = f", {c['path']}:{c.get('line') or c.get('original_line')}" if c.get("path") else ""
+        parent = by_id.get(c.get("in_reply_to_id"))
+        if parent:
+            where += f", replying to {(parent.get('user') or {}).get('login', 'ghost')}"
         login = (c.get("user") or {}).get("login", "ghost")
         body = (c.get("body") or "").strip()
         if other_claim(c):
             login, body = login + CLAIM_LABEL, claim_text(body)
+        elif login == BOT_LOGIN:
+            login += OWN_LABEL
         entry = f"{login}, {c['created_at'][:10]}{where}\n{body}\n"
         if size + len(entry) > DISCUSSION_LIMIT:
+            entries.append("Older comments are cut here.\n")
             break
         entries.append(entry)
         size += len(entry)
-    return "\n".join(entries)
+    if not entries:
+        return ""
+    return "\n".join(["Newest first. Each entry: login, date, and file:line for a line comment.\n",
+                      *entries])
 
 
 def cmd_discussion():
@@ -589,8 +758,14 @@ def graphql(query, **variables):
     return reply["data"]
 
 
+def prior_text(body):
+    """Return a finding's title and problem, without its folding or fix, capped."""
+    body = body.replace("<details><summary>Details</summary>", "").replace("</details>", "")
+    return re.sub(r"\n{3,}", "\n\n", body.split("\n\n**Fix:**", 1)[0]).strip()[:PRIOR_LIMIT]
+
+
 def earlier_findings(threads):
-    """Return the bot's findings, open or settled, with first lines and whether a person replied."""
+    """Return the bot's findings, open or settled, with their text and whether a person replied."""
     found = []
     for t in threads:
         comments = t["comments"]["nodes"]
@@ -601,12 +776,12 @@ def earlier_findings(threads):
         if settled:
             status, finding = SETTLED_STATUS[settled.group(1)], settled.group(2)
         elif PRIOR_SEVERITY.match(body):
-            status, finding = "resolved" if t["isResolved"] else "open", body.split("\n", 1)[0]
+            status, finding = "resolved" if t["isResolved"] else "open", body
         else:
             continue
         replied = any((c["author"] or {}).get("__typename") == "User" for c in comments[1:])
         found.append({"id": t["id"], "comment": comments[0].get("databaseId"), "path": t["path"],
-                      "line": t["line"], "status": status, "finding": finding[:160],
+                      "line": t["line"], "status": status, "finding": prior_text(finding),
                       "replied": replied})
     return found
 
@@ -858,6 +1033,8 @@ def settled_verdict(result, status):
         verdict = "Merge after small fixes" if minor else "Needs more work"
     elif verdict == "Merge after small fixes" and not findings:
         verdict = "Ready to merge"
+    elif verdict == "Merge after small fixes" and any(f["severity"] != "Minor" for f in findings):
+        verdict = "Needs more work"
     if verdict == "Ready to merge":
         waits = [wait for wait, blocked in
                  (("the test builds pass", (status.get("builds") or {}).get("failing")),
@@ -893,6 +1070,8 @@ def summary_text(result, status, head, loose, rerun, fixed=0, still_open=()):
         parts.append(details)
     scope =" (changes since the last review only)" if rerun else ""
     footer = f"Reviewed up to {head[:12]}{scope}."
+    if status.get("knowledge"):
+        footer += f" Kodi context: {', '.join(status['knowledge'])}."
     if fixed:
         footer += f" {fixed} earlier finding{'s' if fixed != 1 else ''} fixed."
     if still_open:
@@ -1044,7 +1223,7 @@ def replies_to_finding(comment):
 
 
 def cmd_trigger():
-    """Exit 1 unless a push, writer or unchecked head's format request asks; react to mentions."""
+    """Exit 1 unless a push, writer or new-head format request asks; react to non-help mentions."""
     if os.environ.get("SOURCE") == "push":
         check_recheck()
         return
@@ -1060,10 +1239,13 @@ def cmd_trigger():
     if reply and (kind != "review" or not replies_to_finding(comment)):
         sys.exit("The comment does not reply to an open finding of the bot.")
     asked = "answer"
-    if mention and FORMAT_ASK.match(body, mention.end()):
-        asked = "format"
-    elif mention and REVIEW_ASK.match(body, mention.end()):
-        asked = "review"
+    if mention and not body[:mention.start()].strip():
+        if FORMAT_ASK.match(body, mention.end()):
+            asked = "format"
+        elif HELP_ASK.match(body, mention.end()):
+            asked = "help"
+        elif REVIEW_ASK.match(body, mention.end()):
+            asked = "review"
     if asked != os.environ.get("MODE", "review"):
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
     if asked == "format":
@@ -1079,7 +1261,7 @@ def cmd_trigger():
             access = "none"
         if access not in CAN_ASK:
             sys.exit(f"{login} has {access} access; asking the bot needs write access.")
-    if reply:
+    if reply or asked == "help":
         return
     try:
         request("POST", f"{path}/reactions", {"content": "eyes"})
@@ -1121,7 +1303,7 @@ def cmd_question():
     question = (asked.get("body") or "").strip()[:QUOTE_LIMIT]
     RUN_DIR.mkdir(exist_ok=True)
     heading = (f"Reply from {login}, without mentioning you" if os.environ.get("SOURCE") == "reply"
-               else f"Question from {login}")
+               else f"Comment from {login}, mentioning you")
     (RUN_DIR / "question.md").write_text(f"{heading}:\n\n{question}\n\n{where}\n")
     (RUN_DIR / "question.json").write_text(json.dumps(
         {"kind": kind, "comment": int(number), "finding": finding, "asker": login,
@@ -1137,10 +1319,13 @@ def cmd_reply():
         result = None
     result = result if isinstance(result, dict) else {}
     pr = os.environ["FORK_PR"]
-    if os.environ.get("SOURCE") == "reply" and not (result.get("reply") or "").strip():
-        if result.get("acknowledge") is True:
-            request("POST", f"/repos/{REPO}/pulls/comments/{asked['comment']}/reactions",
-                    {"content": "+1"})
+    empty = not (result.get("reply") or "").strip()
+    if empty and result.get("acknowledge") is True:
+        kind = "pulls" if asked["kind"] == "review" else "issues"
+        request("POST", f"/repos/{REPO}/{kind}/comments/{asked['comment']}/reactions",
+                {"content": "+1"})
+        return
+    if empty and os.environ.get("SOURCE") == "reply":
         return
     reply = unlinked((result.get("reply") or "").strip()) or NO_ANSWER
     withdraw = unlinked((result.get("withdraw") or "").strip())
@@ -1167,6 +1352,17 @@ def cmd_reply():
             request("PATCH", path, {"body": note + body if accept else fold_finding(note, body)})
     if leaked:
         sys.exit(1)
+
+
+def cmd_help():
+    """Post the list of commands where help was asked: in its thread or the conversation."""
+    kind, number = asking_comment()
+    pr = os.environ["FORK_PR"]
+    body = HELP_FILE.read_text().strip()
+    if kind == "review":
+        request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{number}/replies", {"body": body})
+    else:
+        request("POST", f"/repos/{REPO}/issues/{pr}/comments", {"body": body})
 
 
 def cmd_preload():
@@ -1262,7 +1458,8 @@ COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_pie
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
             "preload": cmd_preload, "keep": cmd_keep,
             "usage": cmd_usage, "format": cmd_format, "format-post": cmd_format_post,
-            "format-render": cmd_format_render}
+            "knowledge": cmd_knowledge, "tests": cmd_tests,
+            "format-render": cmd_format_render, "help": cmd_help}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

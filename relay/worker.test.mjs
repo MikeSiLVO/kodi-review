@@ -25,11 +25,13 @@ test("a mention on an open pull request asks for a review", () => {
     { pr: "7", repo: "xbmc/xbmc", comment: "issue/99", mode: "review", source: "mention" });
 });
 
-test("review or nothing after the mention asks for a review; other words ask a question", () => {
+test("a comment opening with the mention and review or nothing asks for a review", () => {
   const base = issueComment();
   const modes = [["@kodi-review", "review"], ["@kodi-review, Review again", "review"],
+    ["  @kodi-review!", "review"], ["> Quoted.\n\n@kodi-review", "review"],
     ["@kodi-review reviewing this, why?", "answer"], ["Hey @kodi-review is it safe?", "answer"],
-    ["> @kodi-review review\n\n@kodi-review why?", "answer"]];
+    ["> @kodi-review review\n\n@kodi-review why?", "answer"], ["Thanks @kodi-review", "answer"],
+    ["cc @kodi-review", "answer"], ["Thanks @kodi-review format", "answer"]];
   for (const [body, mode] of modes) {
     const payload = issueComment({ comment: { ...base.comment, body } });
     assert.equal(trigger("issue_comment", payload, REPOS).mode, mode, body);
@@ -58,6 +60,16 @@ test("format, clang or clang-format alone asks for the formatting check, from an
     author_association: "NONE" } });
   assert.equal(trigger("issue_comment", stranger("@kodi-review format"), REPOS).mode, "format");
   assert.equal(trigger("issue_comment", stranger("@kodi-review"), REPOS), null);
+});
+
+test("help alone asks for the command list, from writers only", () => {
+  const base = issueComment();
+  const asked = (body, author_association = "MEMBER") => trigger("issue_comment",
+    issueComment({ comment: { ...base.comment, body, author_association } }), REPOS);
+  assert.equal(asked("@kodi-review help").mode, "help");
+  assert.equal(asked("@kodi-review: Help?").mode, "help");
+  assert.equal(asked("@kodi-review help me with this").mode, "answer");
+  assert.equal(asked("@kodi-review help", "NONE"), null);
 });
 
 test("everything else is ignored", () => {

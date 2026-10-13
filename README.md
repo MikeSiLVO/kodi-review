@@ -10,9 +10,10 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
 
 ## How a review runs
 
-1. Someone with write access to the repo comments `@kodi-review review`, or the mention alone, on
-   an open pull request. The comment gets a 👀 reaction and the review starts. A mention inside
-   code, a quote or an HTML comment does not count.
+1. Someone with write access to the repo comments `@kodi-review` alone on an open pull request
+   (`@kodi-review review` works too). The comment gets a 👀 reaction and the review starts. A
+   mention inside code, a quote or an HTML comment does not count, and a command counts only
+   when the mention opens the comment.
 
    `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the
    repository (xbmc/xbmc by default), the effort level (xhigh by default), a dry run that writes
@@ -32,13 +33,19 @@ Issues (read). Mentions only work in xbmc/xbmc and my test fork.
 
 ## Asking questions
 
-Any other words after `@kodi-review` are a question about the pull request. The answer goes in the
-same thread, or quotes the question in the main conversation. In a finding's thread, a reply
-showing the finding is wrong gets agreement and marks the finding withdrawn. Questions about
-anything else, or requests to approve, merge or label, get a one-line reply saying so.
+Any other comment that mentions `@kodi-review` is a question about the pull request. The answer
+goes in the same thread, or quotes the question in the main conversation. A comment that asks
+nothing, such as thanks, gets a 👍 instead. In a finding's thread, a reply showing the finding is
+wrong gets agreement and marks the finding withdrawn. Questions about anything else, or requests
+to approve, merge or label, get a one-line reply saying so.
 
 Under a finding, a team member's reply needs no mention. A question or dispute gets an answer,
 and a reply that only agrees or says a fix is coming gets a 👍.
+
+## Help
+
+`@kodi-review help` alone posts the list of commands from `HELP.md`, in the same thread or the main
+conversation. Only people with write access can ask.
 
 ## Formatting only
 
@@ -55,6 +62,7 @@ model runs. A head that already has its check is not checked again. Dispatched b
 | `schema.json` | The result Claude returns |
 | `ANSWER.md` | The instructions for answering a question, read before `REVIEW.md` |
 | `answer.json` | The answer Claude returns |
+| `HELP.md` | The list of commands posted for `@kodi-review help` |
 | `review.py` | Prepares the inputs, posts the review, prints each run's token use |
 | `test_review.py` | Offline tests: `python3 -m unittest test_review` |
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |

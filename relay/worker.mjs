@@ -1,6 +1,7 @@
 const MENTION = /(?<![\w-])@kodi-review(?![\w-])/i;
 const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
 const FORMAT_ASK = /^[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$/i;
+const HELP_ASK = /^[\s,:.!]*help[\s,:.!?]*$/i;
 const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
 
 /** Return a comment's own words, without code, quoted lines or HTML comments. */
@@ -34,8 +35,10 @@ export function trigger(event, payload, allowed) {
     : event === "pull_request_review_comment" ? payload.pull_request : null;
   if (!pr || pr.state !== "open") return null;
   const kind = event === "issue_comment" ? "issue" : "review";
-  const after = words.slice(MENTION.exec(words).index + "@kodi-review".length);
-  const mode = FORMAT_ASK.test(after) ? "format" : REVIEW_ASK.test(after) ? "review" : "answer";
+  const at = MENTION.exec(words).index;
+  const after = words.slice(at + "@kodi-review".length);
+  const mode = words.slice(0, at).trim() ? "answer" : FORMAT_ASK.test(after) ? "format"
+    : HELP_ASK.test(after) ? "help" : REVIEW_ASK.test(after) ? "review" : "answer";
   if (mode !== "format" && STRANGERS.has(comment.author_association)) return null;
   return { pr: String(pr.number), repo: payload.repository.full_name,
     comment: `${kind}/${comment.id}`, mode, source: "mention" };
