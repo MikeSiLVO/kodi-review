@@ -1252,8 +1252,8 @@ class PreloadTests(unittest.TestCase):
         printed.assert_not_called()
 
 
-class CallersTests(unittest.TestCase):
-    """Uses of the functions a change touches, listed before the review."""
+class TouchesTests(unittest.TestCase):
+    """The state and functions a change touches, with their uses, listed before the review."""
 
     DIFF = ("diff --git a/xbmc/A.cpp b/xbmc/A.cpp\n--- a/xbmc/A.cpp\n+++ b/xbmc/A.cpp\n"
             "@@ -10,3 +10,4 @@ bool CA::Load(int x)\n x\n+y\n"
@@ -1261,36 +1261,124 @@ class CallersTests(unittest.TestCase):
             "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n"
             "@@ -1,1 +1,2 @@ void Docs()\n+text\n")
 
-    def test_functions_come_from_hunks_and_definitions(self):
-        """Functions come from hunk headers and qualified definitions, not macros or other files."""
-        self.assertEqual(review.changed_functions(self.DIFF), ["Load", "Reset"])
+    STATE_DIFF = ("diff --git a/xbmc/A.cpp b/xbmc/A.cpp\n--- a/xbmc/A.cpp\n+++ b/xbmc/A.cpp\n"
+                  "@@ -3,3 +3,5 @@ void CA::Stop()\n x\n-  m_open = true;\n"
+                  "+  case GUI_MSG_PLAYBACK_ERROR:\n+    item->SetProperty(\"unplayable\", true);\n"
+                  "+    tag.m_strTitle = name; info.total = 0;\n"
+                  "+  Get(CSettings::SETTING_LOOKANDFEEL_SKIN);\n y\n")
 
-    def test_too_many_uses_become_a_count(self):
-        """A function used too often gets a count instead of its lines."""
-        found = {"Load": ["a.cpp:1:  Load(1);"], "Reset": ["x"] * (review.CALLER_LIMIT + 1)}
+    def in_repo(self, files, run):
+        """Run a callable inside a throwaway git repo of sample files, returning its result."""
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "full.diff").write_text(self.DIFF)
-            with mock.patch.object(review, "RUN_DIR", Path(tmp)), \
-                    mock.patch.object(review, "uses", side_effect=found.get):
-                review.cmd_callers()
-            text = (Path(tmp) / "callers.txt").read_text()
-        self.assertEqual(text, "Load:\na.cpp:1: Load(1);\n\n"
-                               f"Reset: {review.CALLER_LIMIT + 1} uses, too many to list\n")
-
-    def test_uses_searches_tracked_sources_by_whole_word(self):
-        """Only tracked source files count, and a longer name does not match."""
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "a.cpp").write_text("Load(1);\nLoader x;\n")
-            Path(tmp, "b.md").write_text("Load\n")
+            for name, text in files.items():
+                Path(tmp, name).parent.mkdir(parents=True, exist_ok=True)
+                Path(tmp, name).write_text(text)
             subprocess.run(["git", "init", "-q", tmp], check=True)
             subprocess.run(["git", "-C", tmp, "add", "."], check=True)
             here = os.getcwd()
             os.chdir(tmp)
             try:
-                found = review.uses("Load")
+                return run()
             finally:
                 os.chdir(here)
+
+    def test_functions_come_from_hunks_and_definitions(self):
+        """Functions come from hunk headers and qualified definitions, not macros or other files."""
+        self.assertEqual(review.changed_functions(self.DIFF), ["Load", "Reset"])
+
+    def test_too_many_uses_become_a_count(self):
+        """A function used too often gets a count, and the list stops at its budget."""
+        found = {"Load": ["a.cpp:1:  Load(1);"], "Reset": ["x"] * (review.CALLER_LIMIT + 1)}
+        with mock.patch.object(review, "uses", side_effect=found.get):
+            self.assertEqual(review.function_lines(self.DIFF, 1000),
+                             ["Load:", "a.cpp:1: Load(1);", "",
+                              f"Reset: {review.CALLER_LIMIT + 1} uses, too many to list", ""])
+            self.assertEqual(review.function_lines(self.DIFF, 10), ["More functions not listed."])
+
+    def test_uses_searches_tracked_sources_by_whole_word(self):
+        """Only tracked source files count, and a longer name does not match."""
+        found = self.in_repo({"a.cpp": "Load(1);\nLoader x;\n", "b.md": "Load\n"},
+                             lambda: review.uses("Load"))
         self.assertEqual(found, ["a.cpp:1:Load(1);"])
+
+    def test_added_lines(self):
+        """Only added lines are counted, on the new side's numbering."""
+        self.assertEqual(review.added_lines(self.STATE_DIFF), {"xbmc/A.cpp": {4, 5, 6, 7}})
+
+    def test_touched_state(self):
+        """Members, fields, message ids, settings and property keys come from changed lines."""
+        self.assertEqual(review.touched_state(self.STATE_DIFF),
+                         [("m_open", "member"), ("m_strTitle", "member"), ("total", "field"),
+                          ("GUI_MSG_PLAYBACK_ERROR", "message"),
+                          ("SETTING_LOOKANDFEEL_SKIN", "setting"), ("unplayable", "property")])
+
+    def test_site_roles(self):
+        """Each line is read as a write, read, send, handle, define, declare or comment."""
+        cases = [("member", "m_a", "a.cpp", "  m_a = 1;", "write"),
+                 ("member", "m_a", "a.cpp", "  if (m_a == 1)", "read"),
+                 ("member", "m_a", "a.cpp", "  m_a.push_back(x);", "write"),
+                 ("member", "m_a", "a.cpp", "  m_a->SetFileName(\"\");", "write"),
+                 ("member", "m_a", "a.cpp", "    m_a(nullptr),", "write"),
+                 ("member", "m_a", "a.cpp", "  std::swap(m_a, m_b);", "write"),
+                 ("member", "m_a", "a.cpp", "  Fill(&m_a);", "write"),
+                 ("member", "m_a", "a.cpp", "  return m_a;", "read"),
+                 ("member", "m_a", "a.h", "  bool m_a = false;", "declare"),
+                 ("member", "m_a", "a.cpp", "  // m_a stays set", "comment"),
+                 ("message", "GUI_MSG_X", "a.cpp", "  case GUI_MSG_X:", "handle"),
+                 ("message", "GUI_MSG_X", "a.cpp", "  CGUIMessage msg(GUI_MSG_X, 0, 0);", "send"),
+                 ("message", "GUI_MSG_X", "a.h", "constexpr int GUI_MSG_X = 4;", "define"),
+                 ("setting", "SETTING_X", "a.cpp", "  s->SetBool(CSettings::SETTING_X, true);",
+                  "write"),
+                 ("setting", "SETTING_X", "a.cpp", "  s->GetBool(CSettings::SETTING_X)", "read"),
+                 ("setting", "SETTING_X", "s.xml", '<setting id="a.b" type="boolean">', "define"),
+                 ("property", "k", "x.xml", "<visible>Window.Property(k)</visible>", "read")]
+        for kind, name, path, text, role in cases:
+            self.assertEqual(review.site_role(kind, name, path, text), role, text)
+
+    def test_state_text_lists_writes_first_and_counts_long_reads(self):
+        """Writes come before reads, added lines are marked, and a long list keeps only writes."""
+        sites = ["a.cpp:9:  if (m_a)", "a.cpp:4:  m_a = 1;", "a.h:2:  bool m_a;"]
+        self.assertEqual(review.state_text("m_a", "member", sites, {"a.cpp": {4}}),
+                         "m_a (member): 1 write, 1 read\n"
+                         "  write  + a.cpp:4: m_a = 1;\n"
+                         "  read     a.cpp:9: if (m_a)")
+        reads = [f"a.cpp:{n}:  x = m_a;" for n in range(10, 10 + review.STATE_SITE_LIMIT)]
+        self.assertEqual(review.state_text("m_a", "member", ["a.cpp:4:  m_a = 1;", *reads], {}),
+                         f"m_a (member): 1 write, {review.STATE_SITE_LIMIT} reads in 1 file, "
+                         "reads not listed\n  write    a.cpp:4: m_a = 1;")
+
+    def test_member_sites_stay_with_the_class(self):
+        """A member's sites are its class's files, its header's includers and outside accesses."""
+        files = {"xbmc/A.h": "class CA { bool m_open; };\n",
+                 "xbmc/A.cpp": '#include "A.h"\nvoid CA::Stop() { m_open = false; }\n',
+                 "xbmc/Sub.cpp": '#include "xbmc/A.h"\nvoid CSub::Go() { if (m_open) {} }\n',
+                 "xbmc/Other.cpp": "void COther::Go() { m_open = 1; a->m_open = 2; }\n"}
+        found = self.in_repo(files, lambda: review.member_sites("m_open", ["xbmc/A.cpp"]))
+        self.assertEqual(found, ["xbmc/A.cpp:2:void CA::Stop() { m_open = false; }",
+                                 "xbmc/A.h:1:class CA { bool m_open; };",
+                                 "xbmc/Other.cpp:1:void COther::Go() "
+                                 "{ m_open = 1; a->m_open = 2; }",
+                                 "xbmc/Sub.cpp:2:void CSub::Go() { if (m_open) {} }"])
+
+    def test_command_writes_state_then_functions(self):
+        """The command lists the state section before the functions, within one file."""
+        files = {"xbmc/A.cpp": "void CA::Stop()\n{\n  m_flag = true;\n  if (m_flag) {}\n}\n"}
+        diff = ("diff --git a/xbmc/A.cpp b/xbmc/A.cpp\n--- a/xbmc/A.cpp\n+++ b/xbmc/A.cpp\n"
+                "@@ -2,3 +2,4 @@ void CA::Stop()\n {\n+  m_flag = true;\n   if (m_flag) {}\n }\n")
+
+        def run():
+            """Run the command on the diff and return what it wrote."""
+            Path(".kodi-review-run").mkdir()
+            Path(".kodi-review-run/full.diff").write_text(diff)
+            review.cmd_touches()
+            return Path(".kodi-review-run/touches.txt").read_text()
+        text = self.in_repo(files, run)
+        self.assertEqual(text, f"{review.TOUCHES_HEAD}\n\n"
+                               "m_flag (member): 1 write, 1 read\n"
+                               "  write  + xbmc/A.cpp:3: m_flag = true;\n"
+                               "  read     xbmc/A.cpp:4: if (m_flag) {}\n\n"
+                               f"{review.FUNCTIONS_HEAD}\n"
+                               "Stop:\nxbmc/A.cpp:1:void CA::Stop()\n")
 
 
 class RenderCommandTests(unittest.TestCase):

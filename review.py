@@ -29,6 +29,30 @@ DEFINITION = re.compile(r"^[+-][A-Za-z_][^(;\n]*\b\w+::(~?\w+)\s*\(", re.M)
 NOT_FUNCTIONS = {"if", "for", "while", "switch", "return", "sizeof", "catch"}
 CALLER_LIMIT = 25
 CALLERS_LINE_LIMIT = 150
+MEMBER = re.compile(r"\bm_[A-Za-z]\w*")
+ASSIGNED_FIELD = re.compile(r"(?:\.|->)\s*([A-Za-z_]\w*)\s*(?:\[[^\]\n]*\]\s*)?"
+                            r"(?:[-+*/%&|^]|<<|>>)?=(?!=)")
+MESSAGE_ID = re.compile(r"\b(?:GUI_MSG|TMSG)_[A-Z0-9_]+")
+SETTING_ID = re.compile(r"\bCSettings::(SETTING_[A-Z0-9_]+)")
+PROPERTY_KEY = re.compile(r"\b(?:Set|Get|Clear)Property\(\s*\"([^\"\n]+)\"")
+STATE_PATTERNS = (("member", MEMBER), ("field", ASSIGNED_FIELD), ("message", MESSAGE_ID),
+                  ("setting", SETTING_ID), ("property", PROPERTY_KEY))
+STATE_KINDS = tuple(kind for kind, _ in STATE_PATTERNS)
+MUTATORS = ("clear|push_back|emplace_back|emplace|insert|erase|reset|swap|assign|resize|"
+            "pop_back|pop_front|push_front|store|exchange|fetch_add|fetch_sub|"
+            "(?:Set|Clear|Reset|Free|Alloc|Add|Remove|Update)[A-Z]?\\w*")
+ROLE_ORDER = ("write", "send", "define", "handle", "read")
+STATE_SITE_LIMIT = 40
+STATE_NAME_LIMIT = 40
+STATE_CHAR_LIMIT = 28_000
+TOUCHES_LIMIT = 36_000
+SETTINGS_FILE = "xbmc/settings/Settings.cpp"
+SETTINGS_XML = "system/settings/*.xml"
+SKIN_XML = "addons/skin.*/xml/*.xml"
+TOUCHES_HEAD = ("State the changed lines read or write, with every C and C++ line in the tree that "
+                "writes or reads it. A + marks a line this change adds.")
+FUNCTIONS_HEAD = ("Functions named in a hunk header or a changed definition, and the lines "
+                  "naming them:")
 FORMAT_EXTENSIONS = "c,cc,cpp,cxx,h,hh,hpp,hxx,inl,m,mm"
 FORMAT_CONFIGS = (".clang-format", ".clang-format-ignore")
 FORMAT_CHAR_LIMIT = 20_000
@@ -109,7 +133,7 @@ FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.
 HELP_ASK = re.compile(r"[\s,:.!]*help[\s,:.!?]*$", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
-             "callers.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
+             "touches.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
@@ -223,20 +247,182 @@ def uses(name):
     return found.stdout.splitlines()
 
 
-def cmd_callers():
-    """Write each touched function's uses to callers.txt, a count when too many, capped overall."""
-    diff = (RUN_DIR / "full.diff").read_text(errors="replace")
-    lines = []
+def grep_lines(*args):
+    """Return git grep's output lines for the checkout, path:line:text unless asked for paths."""
+    found = subprocess.run(["git", "grep", "-n", "-I", *args], capture_output=True, text=True,
+                           errors="replace", check=False)
+    return found.stdout.splitlines()
+
+
+def added_lines(diff):
+    """Map each file to the line numbers its diff adds, on the new side."""
+    added = {}
+    for start, end, path in diff_sections(diff):
+        new = 0
+        for row in diff[start:end].splitlines():
+            hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", row)
+            if hunk:
+                new = int(hunk.group(1))
+            elif new and row.startswith("+"):
+                added.setdefault(path, set()).add(new)
+                new += 1
+            elif new and not row.startswith(("-", "\\")):
+                new += 1
+    return added
+
+
+def touched_state(diff):
+    """Return members, assigned fields, message ids, settings and property keys in changed lines."""
+    found = {}
+    for start, end, path in diff_sections(diff):
+        if not any(Path(path).match(glob) for glob in SOURCES):
+            continue
+        for line in changed_lines(diff[start:end]):
+            for kind, pattern in STATE_PATTERNS:
+                for match in pattern.finditer(line):
+                    name = match.group(match.lastindex or 0)
+                    if not (kind == "field" and name.startswith("m_")):
+                        found.setdefault(name, kind)
+    return sorted(found.items(), key=lambda item: STATE_KINDS.index(item[1]))
+
+
+def member_sites(name, changed):
+    """Return a member's lines in its class's files, its header's includers and outside accesses."""
+    stems = {str(Path(path).with_suffix("")) for path in changed}
+    headers = "|".join(re.escape(Path(path).with_suffix(".h").name) for path in changed)
+    includers = set(grep_lines("-l", "-E", f'#include [<"]([^">]*/)?({headers})[">]', "--",
+                               *SOURCES)) if headers else set()
+    outside = re.compile(rf"(?:\.|->)\s*{re.escape(name)}\b")
+    return [site for site in uses(name)
+            if str(Path(site.split(":", 1)[0]).with_suffix("")) in stems
+            or site.split(":", 1)[0] in includers or outside.search(site.split(":", 2)[2])]
+
+
+def setting_sites(name):
+    """Return a setting constant's lines and those naming its string id, settings XML included."""
+    sites = uses(name)
+    defined = grep_lines("-E", rf"\b{name}\s*=\s*\"[^\"]+\"", "--", SETTINGS_FILE)
+    key = re.search(r'"([^"]+)"', defined[0].split(":", 2)[2]) if defined else None
+    if key:
+        sites += [site for site in grep_lines("-F", f'"{key[1]}"', "--", *SOURCES, SETTINGS_XML)
+                  if site not in defined]
+    return sites
+
+
+def state_sites(name, kind, changed):
+    """Return the tree's lines that use one piece of touched state, as path:line:text."""
+    if kind == "member":
+        return member_sites(name, changed)
+    if kind == "field":
+        return grep_lines("-E", rf"(\.|->)\s*{name}\b", "--", *SOURCES)
+    if kind == "setting":
+        return setting_sites(name)
+    if kind == "property":
+        return (grep_lines("-F", f'"{name}"', "--", *SOURCES)
+                + grep_lines("-i", "-F", f"property({name})", "--", SKIN_XML))
+    return uses(name)
+
+
+def writes(name, text):
+    """Whether a line assigns, changes in place or hands out the address of a member or field."""
+    n = re.escape(name)
+    return re.search(rf"\b{n}\s*(?:\[[^\]]*\]\s*)?(?:[-+*/%&|^]|<<|>>)?=(?!=)"
+                     rf"|(?:\+\+|--)\s*{n}\b|\b{n}\s*(?:\+\+|--)"
+                     rf"|\b{n}\s*(?:\.|->)\s*(?:{MUTATORS})\s*\("
+                     rf"|^\s*[:,]?\s*{n}\s*[({{]|(?<![&\w])&\s*{n}\b|\bswap\s*\([^)]*\b{n}\b",
+                     text) is not None
+
+
+def site_role(kind, name, path, text):
+    """Name a line's role: write, read, send, handle, define, declare or comment."""
+    n = re.escape(name)
+    if re.match(r"\s*(?://|/\*|\*)", text):
+        return "comment"
+    if kind == "message":
+        if re.search(rf"\b{n}\s*=(?!=)", text):
+            return "define"
+        tested = re.search(rf"\bcase\s+(?:\w+::)*{n}\b|[!=]=\s*(?:\w+::)*{n}\b|\b{n}\s*[!=]=",
+                           text)
+        return "handle" if tested else "send"
+    if kind in ("setting", "property"):
+        if path.endswith(".xml") and "SetProperty" not in text:
+            return "define" if kind == "setting" else "read"
+        return "write" if re.search(r"\b(?:Set|Clear|Toggle)\w*\s*\(", text) else "read"
+    declared = re.search(rf"^\s*(?!return\b|delete\b|throw\b|case\b)(?:[\w:<>,*&]+\s+)+[*&]?\s*"
+                         rf"{n}\s*(?:\[[^\]]*\])?\s*(?:=[^=;][^;]*|\{{[^}}]*\}})?;", text)
+    if path.endswith((".h", ".hpp")) and declared:
+        return "declare"
+    return "write" if writes(name, text) else "read"
+
+
+def state_text(name, kind, sites, added):
+    """Format one piece of state and its sites, writes first; reads only counted when many."""
+    rows = []
+    for site in sites:
+        path, line, text = site.split(":", 2)
+        role = site_role(kind, name, path, text)
+        if role in ("declare", "comment"):
+            continue
+        mark = "+" if int(line) in added.get(path, ()) else " "
+        rows.append((ROLE_ORDER.index(role), path, int(line),
+                     f"  {role:<6} {mark} {path}:{line}: {' '.join(text.split())[:160]}"))
+    if not rows:
+        return ""
+    rows.sort()
+    tally = [(sum(r[0] == i for r in rows), role) for i, role in enumerate(ROLE_ORDER)]
+    counts = ", ".join(f"{n} {role}{'s' if n != 1 else ''}" for n, role in tally if n)
+    shown = rows if len(rows) <= STATE_SITE_LIMIT else [r for r in rows if r[0] < 4]
+    if len(shown) > STATE_SITE_LIMIT:
+        shown = []
+    files = len({r[1] for r in rows})
+    where = f"{files} file" + ("s" if files != 1 else "")
+    head = f"{name} ({kind}): {counts}" + ("" if shown == rows else
+                                          f" in {where}, {'reads' if shown else 'all'} not listed")
+    return "\n".join([head, *(r[3] for r in shown)])
+
+
+def function_lines(diff, room):
+    """List each touched function's uses, a count when too many, within a character budget."""
+    lines, size = [], 0
     for name in changed_functions(diff):
-        if len(lines) >= CALLERS_LINE_LIMIT:
-            lines.append("More functions not listed.")
-            break
         found = uses(name)
         if len(found) > CALLER_LIMIT:
-            lines += [f"{name}: {len(found)} uses, too many to list", ""]
+            block = [f"{name}: {len(found)} uses, too many to list", ""]
         elif found:
-            lines += [f"{name}:", *(" ".join(line.split())[:200] for line in found), ""]
-    (RUN_DIR / "callers.txt").write_text("\n".join(lines).rstrip() + "\n" if lines else "")
+            block = [f"{name}:", *(" ".join(line.split())[:200] for line in found), ""]
+        else:
+            continue
+        cost = sum(len(line) + 1 for line in block)
+        if len(lines) + len(block) > CALLERS_LINE_LIMIT or size + cost > room:
+            lines.append("More functions not listed.")
+            break
+        lines += block
+        size += cost
+    return lines
+
+
+def cmd_touches():
+    """Write the touched state's sites and the touched functions' uses to touches.txt."""
+    diff = (RUN_DIR / "full.diff").read_text(errors="replace")
+    added = added_lines(diff)
+    changed = [path for _, _, path in diff_sections(diff)]
+    state = touched_state(diff)
+    blocks, size, left = [], 0, [name for name, _ in state[STATE_NAME_LIMIT:]]
+    for name, kind in state[:STATE_NAME_LIMIT]:
+        block = state_text(name, kind, state_sites(name, kind, changed), added)
+        if block and size + len(block) > STATE_CHAR_LIMIT:
+            left.append(name)
+        elif block:
+            blocks.append(block)
+            size += len(block)
+    if left:
+        blocks.append("Not listed, over the size limit: " + ", ".join(left))
+    parts = [TOUCHES_HEAD, *blocks] if blocks else []
+    room = TOUCHES_LIMIT - len("\n\n".join(parts)) - len(FUNCTIONS_HEAD) - 4
+    functions = function_lines(diff, room)
+    if functions:
+        parts.append(FUNCTIONS_HEAD + "\n" + "\n".join(functions).rstrip())
+    (RUN_DIR / "touches.txt").write_text("\n\n".join(parts) + "\n" if parts else "")
 
 
 def knowledge_files(root):
@@ -1458,7 +1644,7 @@ def cmd_usage():
 
 
 COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_piers,
-            "callers": cmd_callers, "status": cmd_status,
+            "touches": cmd_touches, "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
             "preload": cmd_preload, "keep": cmd_keep,

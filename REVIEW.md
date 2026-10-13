@@ -20,10 +20,15 @@ These files in `.kodi-review-run/` were prepared for you:
   gets, the description's promises included, even when it is the fix you suggested.
 - `piers/`: Kodi 22 copies of the touched files. `piers.txt` lists the ones Kodi 22 does not have.
   Lines marked `Not fetched` were not checked.
-- `callers.txt`: for each function named in a hunk header or a changed definition, the C and C++
-  lines in the tree that contain that name as a whole word (calls, declarations and same-named
-  functions of other classes), or only a count above 25. It has no skin, Python or JSON schema
-  uses and no calls through a pointer or another name; search for those yourself.
+- `touches.txt`: what the change reaches outside its own lines. First the state the changed lines
+  read or write (members, assigned fields, GUI_MSG and TMSG message ids, CSettings::SETTING_
+  constants and property keys), each with every C and C++ line in the tree that writes, reads,
+  sends or handles it; a `+` marks a line this change adds, and a long list keeps the writes and
+  counts the reads. A member's list covers its class's own files, files that include its header
+  and accesses through `.` or `->`. Then, for each function named in a hunk header or a changed
+  definition, the C and C++ lines that contain its name as a whole word, or only a count above
+  25. Neither part has Python, JSON schema or most skin uses, nor calls through a pointer or
+  another name; search for those yourself.
 - `tests.txt`: the test files that include a header the diff touches. They state how that code
   is meant to behave; read the relevant ones before judging a change to it.
 - `knowledge.md`: facts about Kodi for the areas this pull request reaches, picked by its labels,
@@ -80,8 +85,10 @@ earlier run or another path left behind, the same value on its other paths), and
 result that changes there is a finding unless the description names that input and says the new
 result is wanted.
 
-When the change adds a new trigger for existing handling (a new caller of a reset, cleanup, error
-or fallback path), check that it leaves the same state the existing triggers leave.
+When the change writes state that existing code reads, or adds a new trigger for existing handling
+(a new caller of a reset, cleanup, error or fallback path, a new sender of a handled message),
+check each existing reader in `touches.txt` against what the new code leaves, compared with what
+the existing writers leave at that point.
 
 When the change edits one branch of an if/else-if chain, a switch or a first-match list such as a
 skin variable, list the inputs that now reach a different branch and check each.
