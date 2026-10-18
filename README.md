@@ -63,11 +63,12 @@ release of its base branch. On a repo-skins submission issue, `@kodi-review skin
 the skin at the link: a GitHub repo at a commit, branch or tag, or a zip. A revision may follow a
 bare repo link. The comment opens with a line of counts, then the new errors in an open fold
 and the new warnings in a closed one. Each holds a fold per kind of problem with an example and
-the files and lines it occurs at, up to 25 lines per file. Fixed findings, findings the skin
-muted (with its reasons) and those already there before get closed folds of their own; a new
-skin counts everything as new. Past GitHub's comment size, long file lists are cut, then tables,
-warnings and smallest first, and the run's summary page lists every finding. Anyone can ask, since no model runs, once per head or link. Omega and Piers skins are checked; master
-counts as Piers while their xbmc.gui versions match.
+a table naming every finding with its count and up to 10 of its places. Fixed findings, findings
+the skin muted (with its reasons) and those already there before get closed folds of their own;
+a new skin counts everything as new. Past GitHub's comment size, each table keeps its 25 largest
+findings, then tables go, warnings and smallest first, and the run's summary page lists every
+finding. Anyone can ask, since no model runs, once per head or link. Omega and Piers skins are
+checked; master counts as Piers while their xbmc.gui versions match.
 
 ## Files
 

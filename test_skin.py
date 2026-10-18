@@ -313,16 +313,17 @@ class RenderTests(unittest.TestCase):
         self.assertTrue(text.endswith("<sub>kdk 3.0.1 · checked aaaa against bbbb.</sub>"))
         self.assertNotIn("actions/runs", text)
 
-    def test_kind_fold_holds_an_example_and_its_places(self):
-        """A kind folds its rule's description and count over an example and a file table."""
+    def test_kind_fold_holds_an_example_and_its_findings(self):
+        """A kind folds its rule's description and count over an example and a finding table."""
         text = self.update()
         self.assertIn("<details><summary><b>Variables</b> · A variable defined twice. "
                       "<code>1</code> in 1 file</summary>\n\n`vars.duplicate` · for example "
                       "`xml/Colors.xml` line 140: `Duplicate variable 'c'`\n\n"
-                      "| File | Count | Lines |\n| --- | --: | --- |\n"
-                      "| `xml/Colors.xml` | 1 | 140 |\n\n</details>", text)
+                      "| Finding | Count | Where |\n| --- | --: | --- |\n"
+                      "| `Duplicate variable 'c'` | 1 | `xml/Colors.xml` 140 |\n\n</details>", text)
         self.assertIn("<b>Fonts</b> · A font nothing uses. <code>2</code> in 1 file", text)
-        self.assertIn("| `xml/Font.xml` | 2 | 9, 10 |", text)
+        self.assertIn("| `Unused font: b` | 1 | `xml/Font.xml` 9 |\n"
+                      "| `Unused font: d` | 1 | `xml/Font.xml` 10 |", text)
 
     def test_fixed_and_already_there_fold_as_digests(self):
         """Fixed and already there are closed one-line-per-kind lists with their counts."""
@@ -350,15 +351,22 @@ class RenderTests(unittest.TestCase):
         self.assertIn("🔴 <b>1 error, 1 kind</b>", text)
         self.assertNotIn("already there", text)
 
-    def test_counts_match_the_table(self):
-        """A kind's count is the sum of its table's Count column, past the line cap too."""
-        head = run(*[("IDs", "error", f"xml/{n % 2}.xml", n, "Window id: 0") for n in range(40)])
+    def test_one_row_per_message_with_capped_places(self):
+        """Findings sharing a message share a row whose places stop at the cap, most found first."""
+        head = run(*[("IDs", "error", f"xml/{n % 2}.xml", n, "Window id: 0")
+                     for n in range(1, 41)], ("IDs", "error", "xml/b.xml", 7, "Window id: 7"))
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("<code>40</code> in 2 files", text)
-        self.assertIn("| `xml/0.xml` | 20 |", text)
-        self.assertIn("| `xml/1.xml` | 20 |", text)
-        many = run(*[("IDs", "error", "xml/a.xml", n, "Window id: 0") for n in range(1, 31)])
-        self.assertIn("21, 22, 23, 24, 25 and 5 more |", skin.skin_text(self.facts(None, many)))
+        self.assertIn("<code>41</code> in 3 files", text)
+        self.assertIn("| `Window id: 0` | 40 | `xml/0.xml` 2, 4, 6, 8, 10, 12, 14, 16, 18, 20 "
+                      "and 30 more |\n| `Window id: 7` | 1 | `xml/b.xml` 7 |", text)
+
+    def test_places_span_files_in_one_cell(self):
+        """A row's places group by file, a file-level finding naming the file alone."""
+        head = run(("IDs", "error", "xml/a.xml", 3, "Window id: 0"),
+                   ("IDs", "error", "xml/b.xml", 0, "Window id: 0"),
+                   ("IDs", "error", "xml/a.xml", 9, "Window id: 0"))
+        self.assertIn("| `Window id: 0` | 3 | `xml/a.xml` 3, 9; `xml/b.xml` |",
+                      skin.skin_text(self.facts(None, head)))
 
     def language_facts(self, *languages):
         """Return facts for a new skin with one finding kdk folded across some languages."""
@@ -370,7 +378,7 @@ class RenderTests(unittest.TestCase):
     def test_language_rows_share_one_row(self):
         """Translation files kdk folded share one table row naming each language with its line."""
         text = skin.skin_text(self.language_facts("de_de", "en_gb"))
-        self.assertIn("| `strings.po` in 2 languages | 2 | de\\_de 9, en\\_gb 10 |", text)
+        self.assertIn("| `Syntax error` | 2 | `strings.po` de\\_de 9, en\\_gb 10 |", text)
         self.assertIn("<code>2</code> in 2 files", text)
         self.assertIn("for example `language/resource.language.de_de/strings.po` line 9", text)
 
@@ -386,7 +394,7 @@ class RenderTests(unittest.TestCase):
                     "Unused variable: @xbmc/team see https://evil.org #123 `x`"))
         text = review.unlinked(skin.skin_text(self.facts(run(), head)))
         self.assertIn("`Unused variable: @xbmc/team see https://evil.org #123 'x'`", text)
-        self.assertIn("| `xml/a\\|b.xml` | 1 | 1 |", text)
+        self.assertIn("| 1 | `xml/a\\|b.xml` 1 |", text)
         outside = text.replace("`Unused variable: @xbmc/team see https://evil.org #123 'x'`", "")
         self.assertNotIn("@xbmc", outside)
 
@@ -398,6 +406,14 @@ class RenderTests(unittest.TestCase):
         self.assertIn("No new problems. 1 muted by the skin.", text)
         self.assertIn("<details><summary><b>1 muted by the skin</b></summary>", text)
         self.assertIn("<code>1</code>, muted as `theme name`", text)
+
+    def test_overflow_keeps_the_largest_findings_first(self):
+        """Past the room, a table keeps its largest findings and counts the rest in one row."""
+        head = run(*[("IDs", "error", "xml/a.xml", n, f"Control ID {n % 60} not defined")
+                     for n in range(1, 121)])
+        with mock.patch.object(skin, "COMMENT_LIMIT", 2500):
+            text = skin.skin_text(self.facts(None, head))
+        self.assertIn("| and 35 more findings | 70 | |", text)
 
     def test_overflow_cuts_tables_and_points_at_the_run(self):
         """Past the room, small kinds lose their tables first and the comment says so."""

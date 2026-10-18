@@ -35,8 +35,8 @@ FILE_LIMIT = 30_000
 ADDON_XML_LIMIT = 2**20
 KDK_TIMEOUT = 900
 COMMENT_LIMIT = 60_000
-LINE_LIMIT = 25
-FILES_SHOWN = 25
+PLACES_SHOWN = 10
+ROWS_SHOWN = 25
 SECTION_ICONS = {"error": "🔴", "warning": "🟡", "fixed": "✅"}
 SEVERITY_WORDS = {"error": "Error", "warning": "Warning"}
 REPORT_LIMIT = 900_000
@@ -47,7 +47,6 @@ GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
 LANGUAGE_CODE = re.compile(r"language/resource\.language\.([^/]+)/strings\.po")
 NAME = re.compile(r"'([^'\n]{1,120})'|(</?[A-Za-z][^<>\n]{0,80}>)|(?<=: )([^\s'`<>]+)$")
-FIRST_LINE = re.compile(r"\s*\([^()]*\bline #[^()]*\)")
 MARKUP = re.compile(r"([\\`*_\[\]#|~!])")
 ISSUE_REF = re.compile(r"#(?=\d)")
 USER_AGENT = "kodi-review"
@@ -575,10 +574,10 @@ def count(rows):
 
 
 def tidy(check, message):
-    """Drop a message's leading check name and its folded line, which the comment already shows."""
+    """Drop a message's leading check name, which the comment already shows."""
     if message.lower().startswith(f"{check.lower()}: "):
-        message = message[len(check) + 2:]
-    return FIRST_LINE.sub("", message)
+        return message[len(check) + 2:]
+    return message
 
 
 def problems(rows):
@@ -594,58 +593,62 @@ def problem_name(kind, rows, rules):
     return rules.get(kind[1]) or tidy(kind[0], rows[0]["message"])
 
 
-def files_of(rows):
-    """Return (file, count, lines) per file, most found first, and (language, line) pairs."""
+def places(rows):
+    """Return the lines per file some rows were found at, most first, and (language, line) pairs."""
     files, languages = {}, []
     for row in rows:
         if row.get("files"):
             languages += [(LANGUAGE_CODE.sub(r"\1", f), line)
                           for f, line in zip(row["files"], row["lines"], strict=False)]
-            continue
-        entry = files.setdefault(row["file"], [0, set()])
-        entry[0] += row["count"]
-        if row["line"]:
-            entry[1].add(row["line"])
-    listed = sorted(((f, n, sorted(lines)) for f, (n, lines) in files.items()),
-                    key=lambda e: (-e[1], e[0]))
+        else:
+            files.setdefault(row["file"], []).append(row["line"])
+    listed = sorted(((f, sorted(lines)) for f, lines in files.items()),
+                    key=lambda e: (-len(e[1]), e[0]))
     return listed, sorted(languages)
 
 
 def spread(rows):
     """Count the files some rows span, each language file counted once."""
-    listed, languages = files_of(rows)
+    listed, languages = places(rows)
     return len(listed) + len({language for language, _ in languages})
 
 
-def line_list(lines):
-    """Join line numbers up to the cap, then say how many more."""
-    shown = ", ".join(map(str, lines[:LINE_LIMIT]))
-    return shown + (f" and {len(lines) - LINE_LIMIT} more" if len(lines) > LINE_LIMIT else "")
+def where(rows):
+    """Format the files and lines some rows were found at, up to the cap, then how many more."""
+    listed, languages = places(rows)
+    spots = [(cell(f), str(line) if line else "") for f, lines in listed for line in lines]
+    spots += [("`strings.po`", f"{plain(language)} {line}" if line else plain(language))
+              for language, line in languages]
+    groups = {}
+    for group, item in spots[:PLACES_SHOWN]:
+        groups.setdefault(group, []).append(item)
+    text = "; ".join(" ".join([group, ", ".join(i for i in items if i)]).strip()
+                     for group, items in groups.items())
+    rest = len(spots) - PLACES_SHOWN
+    return text + (f" and {rest} more" if rest > 0 else "")
 
 
 def example(kind, rows):
     """Format a kind's rule id, one place it was found at and that place's message."""
     first = rows[0]
-    where = code(first["file"]) + (f" line {first['line']}" if first["line"] else "")
+    where_found = code(first["file"]) + (f" line {first['line']}" if first["line"] else "")
     message = tidy(kind[0], first["message"])
-    return f"{code(kind[1] or kind[0])} · for example {where}: {code(message)}"
+    return f"{code(kind[1] or kind[0])} · for example {where_found}: {code(message)}"
 
 
-def file_table(rows, files_shown=None):
-    """Format a kind's places as a File, Count, Lines table; languages share one row."""
-    listed, languages = files_of(rows)
-    lines = ["| File | Count | Lines |", "| --- | --: | --- |"]
-    shown = listed if files_shown is None else listed[:files_shown]
-    lines += [f"| {cell(f)} | {n} | {line_list(ls)} |" for f, n, ls in shown]
-    if len(shown) < len(listed):
-        rest = listed[len(shown):]
-        lines.append(f"| and {plural(len(rest), 'more file')} | {sum(n for _, n, _ in rest)} | |")
-    if languages:
-        named = ", ".join(plain(language) + (f" {line}" if line else "")
-                          for language, line in languages)
-        total = len({language for language, _ in languages})
-        lines.append(f"| `strings.po` in {plural(total, 'language')} | {len(languages)} | "
-                     f"{named} |")
+def finding_table(kind, rows, rows_shown=None):
+    """Format a kind's findings as a Finding, Count, Where table, a row a message up to the cap."""
+    groups = {}
+    for row in rows:
+        groups.setdefault(tidy(kind[0], row["message"]), []).append(row)
+    ordered = sorted(groups.items(), key=lambda g: (-count(g[1]), g[0]))
+    shown = ordered if rows_shown is None else ordered[:rows_shown]
+    lines = ["| Finding | Count | Where |", "| --- | --: | --- |"]
+    lines += [f"| {cell(message)} | {count(group)} | {where(group)} |" for message, group in shown]
+    if len(shown) < len(ordered):
+        rest = [row for _, group in ordered[len(shown):] for row in group]
+        lines.append(f"| and {plural(len(ordered) - len(shown), 'more finding')} | "
+                     f"{count(rest)} | |")
     return "\n".join(lines)
 
 
@@ -657,18 +660,18 @@ def fold(summary, body, opened=False, indent=False):
     return f"<details{attr}><summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
-def kind_fold(kind, rows, rules, files_shown, table):
-    """Format one kind of problem as a fold: example and file table, or the example alone."""
+def kind_fold(kind, rows, rules, rows_shown, table):
+    """Format one kind of problem as a fold: example and finding table, or the example alone."""
     files = spread(rows)
     summary = (f"<b>{plain(kind[0])}</b> · {plain(problem_name(kind, rows, rules))} "
                f"<code>{count(rows)}</code> in {plural(files, 'file')}")
     body = example(kind, rows)
     if table:
-        body += "\n\n" + file_table(rows, files_shown)
+        body += "\n\n" + finding_table(kind, rows, rows_shown)
     return fold(summary, body)
 
 
-def severity_section(kinds, severity, rules, new_skin, files_shown, bare):
+def severity_section(kinds, severity, rules, new_skin, rows_shown, bare):
     """Format one severity's kinds as an indented fold under its icon and counts."""
     members = [(k, rows) for k, rows in kinds if k[2] == severity]
     if not members:
@@ -676,7 +679,7 @@ def severity_section(kinds, severity, rules, new_skin, files_shown, bare):
     noun = ("" if new_skin else "new ") + severity
     title = (f"{SECTION_ICONS[severity]} <b>{plural(sum(count(r) for _, r in members), noun)}, "
              f"{plural(len(members), 'kind')}</b>")
-    inner = "\n".join(kind_fold(k, rows, rules, files_shown, k not in bare) for k, rows in members)
+    inner = "\n".join(kind_fold(k, rows, rules, rows_shown, k not in bare) for k, rows in members)
     return fold(title, inner, opened=severity == "error", indent=True)
 
 
@@ -713,7 +716,7 @@ def verdict(skin, new, muted, fixed, there):
                                                  if extras else "")
 
 
-def skin_body(skin, rules, files_shown, bare):
+def skin_body(skin, rules, rows_shown, bare):
     """Format one skin's part of the comment with some kinds' tables left out; return its kinds."""
     new = [r for r in skin["rows"] if r["status"] == "new"]
     muted = [r for r in skin["rows"] if r["status"] == "muted"]
@@ -728,7 +731,7 @@ def skin_body(skin, rules, files_shown, bare):
              verdict(skin, new, muted, fixed, sum(n for _, n, _ in there))]
     parts += [f"> {nice(notice)}" for notice in skin["notices"]]
     for severity in ("error", "warning"):
-        if part := severity_section(kinds, severity, rules, skin["new_skin"], files_shown, bare):
+        if part := severity_section(kinds, severity, rules, skin["new_skin"], rows_shown, bare):
             parts.append(part)
     if fixed:
         parts.append(fold(f"{SECTION_ICONS['fixed']} <b>{count(fixed)} fixed</b>",
@@ -744,17 +747,17 @@ def skin_body(skin, rules, files_shown, bare):
 
 
 def skin_part(skin, rules, room, run):
-    """Format one skin within its room, cutting files, then tables, warnings and smallest first."""
+    """Format one skin within its room, cutting rows, then tables, warnings and smallest first."""
     text, kinds = skin_body(skin, rules, None, set())
     if len(text) <= room:
         return text
-    text, _ = skin_body(skin, rules, FILES_SHOWN, set())
+    text, _ = skin_body(skin, rules, ROWS_SHOWN, set())
     bare = set()
     for kind, _ in sorted(kinds, key=lambda k: (k[0][2] == "error", count(k[1]))):
         if len(text) <= room - 200:
             break
         bare.add(kind)
-        text, _ = skin_body(skin, rules, FILES_SHOWN, bare)
+        text, _ = skin_body(skin, rules, ROWS_SHOWN, bare)
     note = (f"Some places are left out to fit a comment; the [run's summary]({run}) lists every "
             "finding.")
     head, _, rest = text.partition("\n\n")
