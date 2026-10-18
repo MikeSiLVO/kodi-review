@@ -25,7 +25,8 @@ from review import (CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, hide_summarie
 KODI_REPOS = ("xbmc/xbmc", "MikeSiLVO/xbmc")
 GUI_RELEASES = {"5.17": "omega", "5.18": "piers"}
 RELEASE_NAMES = {"omega": "Kodi 21 (Omega)", "piers": "Kodi 22 (Piers)"}
-KODI_PATHS = ("system", "addons/resource.language.en_gb", "addons/xbmc.gui")
+KODI_PATHS = ("system", "addons/resource.language.en_gb", "addons/xbmc.gui",
+              "xbmc/GUIInfoManager.cpp")
 DEFAULT_SKIN = "addons/skin.estuary"
 SKIN_LIMIT = 2
 DOWNLOAD_LIMIT = 200 * 2**20
