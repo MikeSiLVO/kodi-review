@@ -82,6 +82,7 @@ counts as Piers while their xbmc.gui versions match.
 | `test_review.py` | Offline tests: `python3 -m unittest test_review` |
 | `skin.py` | Fetches the skin, runs kdk in its sandbox, posts the skin check |
 | `test_skin.py` | Offline tests: `python3 -m unittest test_skin` |
+| `kdkcheck.py` | Tries a kdk build on pinned real skins through the skin check and diffs it with the last run: `python3 kdkcheck.py` |
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
