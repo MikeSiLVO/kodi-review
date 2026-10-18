@@ -285,12 +285,13 @@ class RenderTests(unittest.TestCase):
                                         "🔴 **1** new error · 🟡 **2** new warnings · "
                                         "✅ **1** fixed\n\n"))
         self.assertIn("<details><summary>🔣 <b>Variables</b> · 🔴 1</summary>\n\n"
-                      "| | Problem | Where |\n| :-: | --- | --- |\n"
-                      "| 🔴 | Duplicate variable `c` | `xml/Colors.xml:140` |\n\n</details>", text)
+                      "| | Problem | Count | Where |\n| :-: | --- | --: | --- |\n"
+                      "| 🔴 | Duplicate variable `c` | 1 | `xml/Colors.xml` 140 |\n\n</details>",
+                      text)
         self.assertIn("<summary>🔤 <b>Fonts</b> · 🟡 2</summary>", text)
         self.assertLess(text.index("Variables"), text.index("Fonts"))
         self.assertIn("<summary>✅ <b>Fixed</b> · 1</summary>", text)
-        self.assertIn("| ✅ | 🔤 Fonts: Unused font: `a` | `xml/Font.xml:3` |", text)
+        self.assertIn("| ✅ | 🔤 Fonts: Unused font: `a` | 1 | `xml/Font.xml` 3 |", text)
         self.assertIn("<sub>Already there before: 4 errors, 9 warnings.</sub>", text)
         self.assertTrue(text.endswith("<sub>kdk 2.1.0 · checked aaaa against bbbb.</sub>"))
         self.assertNotIn("actions/runs", text)
@@ -308,16 +309,18 @@ class RenderTests(unittest.TestCase):
         text = skin.skin_text(self.facts(None, head))
         self.assertIn("🆕 New skin, checked against Kodi 22 (Piers)\n\n"
                       "🔴 **1** error · 🟡 **1** warning", text)
-        self.assertIn("| 🟡 | Unused font: `a` | `xml/Font.xml:2` |", text)
+        self.assertIn("| 🟡 | Unused font: `a` | 1 | `xml/Font.xml` 2 |", text)
 
     def test_one_problem_in_many_places_is_one_row(self):
-        """The same message across files is one row listing a few places and how many more."""
+        """The same message across files is one row counting every place, the rest folded."""
         head = run(*[("XML Validation", "warning", f"xml/{n}.xml", 4, "Redundant <aligny>")
                      for n in range(5)], ("XML Validation", "warning", "xml/0.xml", 9,
                                           "Redundant <aligny>"))
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("| 🟡 | Redundant `<aligny>` | `xml/0.xml:9` ×2<br>`xml/1.xml:4`<br>"
-                      "`xml/2.xml:4`<br>and 2 more |", text)
+        self.assertIn("| 🟡 | Redundant `<aligny>` | 6 | `xml/0.xml` 4, 9<br>`xml/1.xml` 4<br>"
+                      "`xml/2.xml` 4<details><summary>2 more files</summary>`xml/3.xml` 4<br>"
+                      "`xml/4.xml` 4</details> |", text)
+        self.assertIn("<summary>🧩 <b>XML Validation</b> · 🟡 6</summary>", text)
 
     def test_language_rows_read_cleanly(self):
         """A folded language row drops its check name and line, and names its file count."""
@@ -326,7 +329,15 @@ class RenderTests(unittest.TestCase):
                       f"Kodi repo: string id 31496 is defined twice (first on line {n})")
                      for n, lang in enumerate(("en_gb", "de_de"))])
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("| 🟡 | string id 31496 is defined twice | 2 language files |", text)
+        self.assertIn("| 🟡 | string id 31496 is defined twice | 2 | <details><summary>2 language "
+                      "files</summary>de\\_de, en\\_gb</details> |", text)
+
+    def test_language_codes_are_escaped(self):
+        """A language folder name from the skin cannot inject HTML into the folded list."""
+        po = "language/resource.language.{}/strings.po"
+        head = run(*[("Kodi Repo", "warning", po.format(lang), 9, "Syntax error")
+                     for lang in ("<img src=x>", "en_gb")])
+        self.assertNotIn("<img", skin.skin_text(self.facts(None, head)))
 
     def test_skin_text_cannot_ping_link_or_break_the_table(self):
         """Text from a skin, escaped or in code, cannot mention, link or split a table cell."""
@@ -338,15 +349,15 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("https://evil", row)
         self.assertNotIn("#123", row)
         self.assertIn("\\[x\\](y)", row)
-        self.assertIn("`xml/a\\|b.xml:1`", row)
-        self.assertEqual(row.count(" | "), 2)
+        self.assertIn("`xml/a\\|b.xml` 1", row)
+        self.assertEqual(row.count(" | "), 3)
 
     def test_muted_findings_show_their_reason(self):
         """A finding new and muted on head shows the mute icon and the skin's reason."""
         head = run(("Labels", "warning", "xml/a.xml", 3, "Not translated",
                     {"line": 2, "reason": "theme name"}))
         text = skin.skin_text(self.facts(run(), head))
-        self.assertIn("| 🔕 | Not translated<br><sub>muted: theme name</sub> | `xml/a.xml:3` |",
+        self.assertIn("| 🔕 | Not translated<br><sub>muted: theme name</sub> | 1 | `xml/a.xml` 3 |",
                       text)
         self.assertIn("✅ No new problems", text)
 

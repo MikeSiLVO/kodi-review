@@ -47,6 +47,7 @@ REVISION = re.compile(r"\w[\w./-]{0,99}")
 GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
 LANGUAGE_FILE = re.compile(r"language/resource\.language\.[^/]+/strings\.po")
+LANGUAGE_CODE = re.compile(r"language/resource\.language\.([^/]+)/strings\.po")
 LINE_NUMBER = re.compile(r"\bline \d+")
 NAME = re.compile(r"'([^'\n]{1,120})'|(</?[A-Za-z][^<>\n]{0,80}>)|(?<=: )([^\s'`<>]+)$")
 FIRST_LINE = re.compile(r"\s*\([^()]*\bline #[^()]*\)")
@@ -332,7 +333,8 @@ def compare(base, head):
             if extra <= 0:
                 continue
             files = sorted({i["file"] for i in items})
-            row: dict[str, Any] = {**items[-1], "status": status, "count": extra}
+            row: dict[str, Any] = {**items[-1], "status": status, "count": extra,
+                                   "lines": sorted({i["line"] for i in items if i["line"]})}
             if len(files) > 1:
                 row.update(file=key[2], line=0, files=files, message=key[3])
             rows.append(row)
@@ -554,11 +556,12 @@ def plural(count, word):
 
 
 def place(row):
-    """Format where one row sits: file, line and repeats, or how many language files it spans."""
+    """Format where one row sits: its file and lines, or the languages it spans folded."""
     if row.get("files"):
-        return f"{len(row['files'])} language files"
-    times = f" ×{row['count']}" if row["count"] > 1 else ""
-    return cell(row["file"] + (f":{row['line']}" if row["line"] else "")) + times
+        codes = ", ".join(plain(LANGUAGE_CODE.sub(r"\1", f)) for f in row["files"])
+        return f"<details><summary>{len(row['files'])} language files</summary>{codes}</details>"
+    lines = row.get("lines") or ([row["line"]] if row["line"] else [])
+    return f"{cell(row['file'])} {', '.join(map(str, lines))}".rstrip()
 
 
 def grouped(rows):
@@ -590,18 +593,21 @@ def badges(rows, new=False):
 
 def table(rows, room, mark=None):
     """Format findings as a table within a size cap, counting the problems left out."""
-    lines = ["| | Problem | Where |", "| :-: | --- | --- |"]
+    lines = ["| | Problem | Count | Where |", "| :-: | --- | --: | --- |"]
     used = sum(len(line) + 1 for line in lines)
     groups = grouped(rows)
     for shown, (rule, severity, message, reason, items) in enumerate(groups):
         places = [place(r) for r in items]
         where = "<br>".join(places[:PLACE_LIMIT])
         if len(places) > PLACE_LIMIT:
-            where += f"<br>and {len(places) - PLACE_LIMIT} more"
+            rest = "<br>".join(places[PLACE_LIMIT:])
+            where += (f"<details><summary>{len(places) - PLACE_LIMIT} more files</summary>"
+                      f"{rest}</details>")
         icon = mark or (MUTED_ICON if reason else SEVERITY_ICONS.get(severity, "🔹"))
         why = f"<br><sub>muted: {plain(reason)}</sub>" if reason else ""
         check = f"{CHECK_ICONS.get(rule, '🔹')} {plain(rule)}: " if mark else ""
-        line = f"| {icon} | {check}{nice(tidy(rule, message))}{why} | {where} |"
+        count = sum(r["count"] for r in items)
+        line = f"| {icon} | {check}{nice(tidy(rule, message))}{why} | {count} | {where} |"
         if used + len(line) + 1 > room:
             return "\n".join(lines), len(groups) - shown
         lines.append(line)
