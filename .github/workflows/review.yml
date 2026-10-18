@@ -32,11 +32,11 @@ on:
         required: false
         type: string
       mode:
-        description: "Set by the relay: review (one queue), answer or help (a queue per comment) or format (own queue, no model)"
+        description: "Set by the relay: review (one queue), answer or help (a queue per comment), format or skin (own queues, no model)"
         required: false
         type: string
       source:
-        description: "Set by the relay: mention, reply (in a finding's thread) or push"
+        description: "Set by the relay: mention, reply (in a finding's thread), push, or issue (a skin ask on an issue)"
         required: false
         type: string
 
@@ -44,7 +44,7 @@ concurrency:
   group: >-
     kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ (inputs.mode == 'answer'
     || inputs.mode == 'help') && inputs.comment || inputs.mode == 'format' && 'format'
-    || 'review' }}
+    || inputs.mode == 'skin' && 'skin' || 'review' }}
   cancel-in-progress: false
 
 env:
@@ -56,7 +56,7 @@ env:
   COMMENT: ${{ inputs.comment }}
   MODE: ${{ inputs.mode || 'review' }}
   SOURCE: ${{ inputs.source }}
-  ALLOWED_REPOS: xbmc/xbmc MikeSiLVO/xbmc
+  ALLOWED_REPOS: xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins
 
 jobs:
   trigger:
@@ -83,6 +83,7 @@ jobs:
 
       - name: Get an App token
         id: app
+        if: inputs.source != 'issue'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
@@ -91,9 +92,20 @@ jobs:
           repositories: ${{ steps.target.outputs.name }}
           permission-pull-requests: write
 
+      - name: Get an App token for an issue
+        id: issue_app
+        if: inputs.source == 'issue'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
+          private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+          permission-issues: write
+
       - name: Check that this run was asked for
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || steps.issue_app.outputs.token }}
         run: python3 bot/review.py trigger
 
       - name: Post the list of commands
@@ -103,7 +115,7 @@ jobs:
         run: python3 bot/review.py help
 
   review:
-    if: github.repository_owner == 'MikeSiLVO' && inputs.mode != 'help'
+    if: github.repository_owner == 'MikeSiLVO' && inputs.mode != 'help' && inputs.mode != 'skin'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -393,3 +405,127 @@ jobs:
             answer) RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py reply ;;
             *) RESULT=$(cat .kodi-review-run/result.json) python3 bot/review.py post ;;
           esac
+
+  skin:
+    if: github.repository_owner == 'MikeSiLVO' && inputs.mode == 'skin'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      prepared: ${{ steps.check.outputs.prepared }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BOT: .kodi-review-bot
+    steps:
+      - name: Wait for the trigger check
+        if: inputs.comment != ''
+        run: |
+          jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
+          for _ in $(seq 120); do
+            state=$(gh api "$jobs" --jq '.jobs[] | select(.name == "trigger")
+              | "\(.status) \(.conclusion)"')
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "The trigger check did not pass: $state"; exit 1 ;;
+            esac
+            sleep 2
+          done
+          echo "The check did not finish in time"
+          exit 1
+
+      - name: Check out the review bot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .kodi-review-bot
+          persist-credentials: false
+
+      - name: Install kdk and bubblewrap
+        run: |
+          (cd "$BOT/vendor" && sha256sum -c --quiet SHA256SUMS) \
+            || { echo "::warning::The vendored files failed their checksums"; exit 0; }
+          sudo dpkg-deb -x "$BOT"/vendor/bubblewrap_*.deb /
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+            sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          python3 -m venv "$RUNNER_TEMP/kdk"
+          "$RUNNER_TEMP/kdk/bin/pip" install -q --no-index --no-deps "$BOT"/vendor/kdk/*.whl \
+            && echo "KDK_PYTHON=$RUNNER_TEMP/kdk/bin/python" >> "$GITHUB_ENV" \
+            || echo "::warning::kdk did not install"
+
+      - name: Check the skin
+        id: check
+        run: |
+          python3 "$BOT/skin.py" check
+          echo "prepared=true" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the result to the post job
+        if: steps.check.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: skin
+          include-hidden-files: true
+          retention-days: 3
+          path: .kodi-review-run/skin.json
+
+  skin-post:
+    needs: [trigger, skin]
+    if: >-
+      ${{ !cancelled() && needs.skin.outputs.prepared == 'true'
+      && (inputs.comment == '' || needs.trigger.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the review bot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: bot
+          persist-credentials: false
+
+      - name: Get the skin check
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: skin
+          path: .kodi-review-run
+
+      - name: Write the skin check to the run summary
+        if: inputs.dry_run
+        run: python3 bot/skin.py render >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Split the repository name
+        id: target
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "owner=${UPSTREAM%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${UPSTREAM#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Get an App token
+        id: app
+        if: ${{ !inputs.dry_run && inputs.source != 'issue' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
+          private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+          permission-pull-requests: write
+
+      - name: Get an App token for an issue
+        id: issue_app
+        if: ${{ !inputs.dry_run && inputs.source == 'issue' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
+          private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
+          permission-issues: write
+
+      - name: Post the skin check
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || steps.issue_app.outputs.token }}
+        run: python3 bot/skin.py post

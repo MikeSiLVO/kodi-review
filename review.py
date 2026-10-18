@@ -21,6 +21,8 @@ KODI = "xbmc/xbmc"
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
+SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+) -->")
+SKIN_REPOS = ("xbmc/repo-skins", "MikeSiLVO/repo-skins")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
 SECTION = re.compile(r"^diff --git a/\S+ b/(\S+)$", re.M)
@@ -131,6 +133,7 @@ PRIOR_LIMIT = 600
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
 HELP_ASK = re.compile(r"[\s,:.!]*help[\s,:.!?]*$", re.I)
+SKIN_ASK = re.compile(r"[\s,:.!]*skin\b", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
              "touches.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
@@ -1434,8 +1437,14 @@ def replies_to_finding(comment):
             and bool(PRIOR_SEVERITY.match(first.get("body") or "")))
 
 
+def skin_comments():
+    """Return the bot's skin check comments on the pull request or issue, oldest first."""
+    return [c for c in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments")
+            if c["user"]["type"] == "Bot" and SKIN_MARKER.match(c["body"] or "")]
+
+
 def cmd_trigger():
-    """Exit 1 unless a push, writer or new-head format request asks; react to non-help mentions."""
+    """Exit 1 unless a push or an ask this repo and asker may make; react to non-help mentions."""
     if os.environ.get("SOURCE") == "push":
         check_recheck()
         return
@@ -1456,11 +1465,20 @@ def cmd_trigger():
             asked = "format"
         elif HELP_ASK.match(body, mention.end()):
             asked = "help"
+        elif SKIN_ASK.match(body, mention.end()):
+            asked = "skin"
         elif REVIEW_ASK.match(body, mention.end()):
             asked = "review"
     if asked != os.environ.get("MODE", "review"):
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
-    if asked == "format":
+    if REPO in SKIN_REPOS and asked != "skin":
+        sys.exit(f"Only the skin check runs on {REPO}.")
+    if asked == "skin":
+        if os.environ.get("SOURCE") != "issue":
+            head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+            if any(m[2] == head for c in skin_comments() if (m := SKIN_MARKER.match(c["body"]))):
+                sys.exit(f"The skin check of {head[:12]} is already posted.")
+    elif asked == "format":
         head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
         posted = {m[1] for c in format_comments() if (m := FORMAT_MARKER.match(c["body"]))}
         if head in posted:

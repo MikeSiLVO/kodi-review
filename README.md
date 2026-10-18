@@ -6,7 +6,8 @@ the code, and adds a status block.
 
 Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) GitHub App. To use it
 on a repo, install the App there with its two permissions: Pull requests (read and write) and
-Issues (read). Mentions only work in xbmc/xbmc and my test fork.
+Issues (read and write, for skin checks on issues). Mentions only work in xbmc/xbmc,
+xbmc/repo-skins and my test forks of both; repo-skins takes only the skin check.
 
 ## How a review runs
 
@@ -54,6 +55,17 @@ formatting check and posts it as its own comment, hiding the last one. Anyone ca
 model runs. A head that already has its check is not checked again. Dispatched by hand with
 `mode` set to `format` and a dry run, it writes the check to the run's summary page instead.
 
+## Skin check
+
+`@kodi-review skin` alone on a pull request checks the skins it changes with
+[kdk](https://github.com/MikeSiLVO/kdk), or Estuary when it changes none, against the Kodi
+release of its base branch. On a repo-skins submission issue, `@kodi-review skin <link>` checks
+the skin at the link: a GitHub repo at a commit, branch or tag, or a zip. A revision may follow a
+bare repo link. The comment lists the problems that are new since the base, or for a new skin its
+errors and counts per check, and links the run's summary page, which lists every finding. Anyone
+can ask, since no model runs, once per head or link. Omega and Piers skins are checked; master
+counts as Piers while their xbmc.gui versions match.
+
 ## Files
 
 | File | What it is |
@@ -65,6 +77,8 @@ model runs. A head that already has its check is not checked again. Dispatched b
 | `HELP.md` | The list of commands posted for `@kodi-review help` |
 | `review.py` | Prepares the inputs, posts the review, prints each run's token use |
 | `test_review.py` | Offline tests: `python3 -m unittest test_review` |
+| `skin.py` | Fetches the skin, runs kdk in its sandbox, posts the skin check |
+| `test_skin.py` | Offline tests: `python3 -m unittest test_skin` |
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
@@ -86,3 +100,9 @@ The reviewer reads code and text written by strangers, so it gets as little as p
   can dispatch one by hand. A push starts a re-review only after such a review left open findings.
   A formatting request runs no model, so anyone may make it, once per head. None of it works
   outside the repos the relay lists.
+- A skin check reads strangers' files, so the job that fetches and checks them holds no App token;
+  a separate job posts the result. A download must be https to a public address, under 200 MB,
+  and unpack to under 600 MB and 30,000 files with no links or paths outside its folder.
+- kdk runs in bubblewrap with no network, no environment, a read-only skin and one writable
+  folder for its report, and ignores config files in the skin. If the sandbox cannot start,
+  nothing is checked. Text from the skin is posted inside code spans.

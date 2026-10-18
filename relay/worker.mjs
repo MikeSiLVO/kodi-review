@@ -2,6 +2,7 @@ const MENTION = /(?<![\w-])@kodi-review(?![\w-])/i;
 const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
 const FORMAT_ASK = /^[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$/i;
 const HELP_ASK = /^[\s,:.!]*help[\s,:.!?]*$/i;
+const SKIN_ASK = /^[\s,:.!]*skin\b/i;
 const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
 
 /** Return a comment's own words, without code, quoted lines or HTML comments. */
@@ -25,23 +26,30 @@ export async function verify(secret, body, signature) {
   return crypto.subtle.verify("HMAC", key, digest, encoder.encode(body));
 }
 
-/** Return the review inputs a new mention on an open pull request asks for, or null. */
-export function trigger(event, payload, allowed) {
+/** Return a new mention's inputs, or null for one this repo, page or asker does not take. */
+export function trigger(event, payload, allowed, skinRepos = []) {
   if (payload.action !== "created" || !allowed.includes(payload.repository?.full_name)) return null;
   const comment = payload.comment;
   const words = spoken(comment?.body || "");
   if (!comment || comment.user?.type === "Bot" || !MENTION.test(words)) return null;
-  const pr = event === "issue_comment" && payload.issue?.pull_request ? payload.issue
+  const onIssue = event === "issue_comment" && !payload.issue?.pull_request;
+  const pr = event === "issue_comment" ? payload.issue
     : event === "pull_request_review_comment" ? payload.pull_request : null;
   if (!pr || pr.state !== "open") return null;
   const kind = event === "issue_comment" ? "issue" : "review";
   const at = MENTION.exec(words).index;
   const after = words.slice(at + "@kodi-review".length);
   const mode = words.slice(0, at).trim() ? "answer" : FORMAT_ASK.test(after) ? "format"
-    : HELP_ASK.test(after) ? "help" : REVIEW_ASK.test(after) ? "review" : "answer";
-  if (mode !== "format" && STRANGERS.has(comment.author_association)) return null;
-  return { pr: String(pr.number), repo: payload.repository.full_name,
-    comment: `${kind}/${comment.id}`, mode, source: "mention" };
+    : HELP_ASK.test(after) ? "help" : SKIN_ASK.test(after) ? "skin"
+    : REVIEW_ASK.test(after) ? "review" : "answer";
+  const repo = payload.repository.full_name;
+  const skinRepo = skinRepos.includes(repo);
+  if ((onIssue || skinRepo) && (mode !== "skin" || !skinRepo)) return null;
+  if (mode !== "format" && mode !== "skin" && STRANGERS.has(comment.author_association)) {
+    return null;
+  }
+  return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`, mode,
+    source: onIssue ? "issue" : "mention" };
 }
 
 /** Return the bot's newest summary comment on a pull request, or null. */
@@ -102,7 +110,7 @@ export default {
     const event = request.headers.get("x-github-event");
     const payload = JSON.parse(body);
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
-    const inputs = trigger(event, payload, allowed)
+    const inputs = trigger(event, payload, allowed, (env.SKIN_REPOS || "").split(/\s+/))
       ?? await followUp(event, payload, allowed, (path) => readGitHub(path, env.DISPATCH_TOKEN));
     if (!inputs) return new Response("Ignored", { status: 202 });
     const reply = await fetch(

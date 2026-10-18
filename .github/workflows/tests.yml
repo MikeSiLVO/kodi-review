@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyright==1.1.411 ruff==0.16.6
-      - run: python -m unittest -v test_review
+      - run: python -m unittest -v test_review test_skin
       - run: ruff check .
-      - run: pyright review.py test_review.py
+      - run: pyright review.py test_review.py skin.py test_skin.py
       - run: node --test relay/worker.test.mjs

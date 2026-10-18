@@ -954,12 +954,13 @@ class TrimTests(unittest.TestCase):
 class TriggerTests(unittest.TestCase):
     """Deciding whether a comment may start a run, and whether it asks for a review or answer."""
 
-    def run_trigger(self, comment, access="write", asker="issue/5", mode="review", posted=()):
+    def run_trigger(self, comment, access="write", asker="issue/5", mode="review", posted=(),
+                    skins=(), source="mention"):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
         def reply(method, path, body=None, raw=False):
-            """Reply like GitHub for the comment, the commenter's access and the format comments."""
+            """Reply like GitHub for the comment, the commenter's access and the bot's checks."""
             calls.append((method, path))
             if comment is None:
                 refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
@@ -967,8 +968,10 @@ class TriggerTests(unittest.TestCase):
             if path.endswith("/pulls/7"):
                 return {"head": {"sha": "a" * 40}}
             if "/issues/7/comments" in path:
-                return [{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
-                        for sha in posted]
+                return ([{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
+                         for sha in posted]
+                        + [{"user": {"type": "Bot"}, "body": f"<!-- kodi-review skin sha={sha} -->"}
+                           for sha in skins])
             if path.endswith("/permission"):
                 if access is None:
                     refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
@@ -978,7 +981,8 @@ class TriggerTests(unittest.TestCase):
                 return comment
             return None
         with mock.patch.object(review, "request", side_effect=reply), \
-                mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode}):
+                mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode,
+                                             "SOURCE": source}):
             try:
                 review.cmd_trigger()
             except SystemExit as stop:
@@ -1055,6 +1059,30 @@ class TriggerTests(unittest.TestCase):
                                        mode="format", posted=["a" * 40])
         self.assertIn("already posted", str(code))
         self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_anyone_may_ask_for_the_skin_check_once_per_head(self):
+        """A skin ask needs no write access, and is refused once the head has its skin check."""
+        ask = self.comment(body="@kodi-review skin")
+        calls, code = self.run_trigger(ask, access="none", mode="skin", skins=["b" * 40])
+        self.assertIsNone(code)
+        self.assertFalse(any(path.endswith("/permission") for _, path in calls))
+        self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
+        calls, code = self.run_trigger(ask, access="none", mode="skin", skins=["a" * 40])
+        self.assertIn("already posted", str(code))
+        link = self.comment(body="@kodi-review skin https://github.com/o/skin.x/tree/v1")
+        calls, code = self.run_trigger(link, access="none", mode="skin", source="issue")
+        self.assertIsNone(code)
+        self.assertFalse(any(path.endswith("/pulls/7") for _, path in calls))
+
+    def test_skin_repos_take_only_the_skin_check(self):
+        """On a skin repository a review or format ask is refused even from a writer."""
+        with mock.patch.object(review, "REPO", "xbmc/repo-skins"):
+            for body, mode in (("@kodi-review", "review"), ("@kodi-review format", "format")):
+                calls, code = self.run_trigger(self.comment(body=body), mode=mode)
+                self.assertIn("Only the skin check", str(code))
+                self.assertNotIn("POST", [method for method, _ in calls])
+            self.assertIsNone(self.run_trigger(self.comment(body="@kodi-review skin"),
+                                               mode="skin")[1])
 
     def test_line_comment_is_read_from_pulls(self):
         """A line comment is read from the pull request comments and passes."""

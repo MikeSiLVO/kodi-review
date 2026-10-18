@@ -38,6 +38,26 @@ test("a comment opening with the mention and review or nothing asks for a review
   }
 });
 
+test("skin asks a skin check from anyone; skin repos and their issues take only that", () => {
+  const skins = ["xbmc/repo-skins"];
+  const repos = [...REPOS, ...skins];
+  const ask = (body, changes = {}) => issueComment({ ...changes, comment: {
+    ...issueComment().comment, body, author_association: "NONE" } });
+  assert.equal(trigger("issue_comment", ask("@kodi-review skin"), repos, skins).mode, "skin");
+  assert.equal(trigger("issue_comment", ask("@kodi-review skins?"), repos, skins), null);
+  const repoSkins = { repository: { full_name: "xbmc/repo-skins" } };
+  const issue = { ...repoSkins, issue: { number: 497, state: "open" } };
+  assert.deepEqual(trigger("issue_comment", ask("@kodi-review skin https://x.org/s.zip", issue),
+    repos, skins), { pr: "497", repo: "xbmc/repo-skins", comment: "issue/99", mode: "skin",
+    source: "issue" });
+  for (const [body, changes] of [["@kodi-review", repoSkins], ["@kodi-review format", issue],
+    ["@kodi-review skin", { issue: { number: 3, state: "open" } }],
+    ["@kodi-review skin https://x.org/s.zip", { ...issue, issue: { number: 497,
+      state: "closed" } }]]) {
+    assert.equal(trigger("issue_comment", ask(body, changes), repos, skins), null, body);
+  }
+});
+
 test("a mention in a line comment names the review comment", () => {
   const payload = { action: "created", repository: { full_name: "xbmc/xbmc" },
     pull_request: { number: 8, state: "open" },
