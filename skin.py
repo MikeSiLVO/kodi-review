@@ -304,20 +304,20 @@ def own_file_dropped(item):
 
 
 def findings(run):
-    """Flatten a kdk report into rows of check, severity, file, line, message, mute and reason."""
-    return [{"rule": category, "severity": item.get("severity", ""),
-             "file": item.get("file", ""), "line": item.get("line") or 0,
-             "message": own_file_dropped(item), "muted": bool(item.get("muted")),
-             "reason": mute_reason(item)}
+    """Flatten a kdk report into rows of check, rule, subject, severity, place, message and mute."""
+    return [{"check": category, "rule": item.get("rule", ""), "subject": item.get("subject", ""),
+             "severity": item.get("severity", ""), "file": item.get("file", ""),
+             "line": item.get("line") or 0, "message": own_file_dropped(item),
+             "muted": bool(item.get("muted")), "reason": mute_reason(item)}
             for category, items in (run.get("categories") or {}).items() for item in items]
 
 
 def fold_key(row):
     """Return a finding's match key across runs, one for a finding in every language file."""
     if LANGUAGE_FILE.fullmatch(row["file"]):
-        return (row["rule"], row["severity"], "language/*/strings.po",
+        return (row["check"], row["rule"], row["severity"], "language/*/strings.po",
                 LINE_NUMBER.sub("line #", row["message"]), row["muted"])
-    return (row["rule"], row["severity"], row["file"], row["message"], row["muted"])
+    return (row["check"], row["rule"], row["severity"], row["file"], row["message"], row["muted"])
 
 
 def compare(base, head):
@@ -336,7 +336,8 @@ def compare(base, head):
             row: dict[str, Any] = {**items[-1], "status": status, "count": extra,
                                    "lines": sorted({i["line"] for i in items if i["line"]})}
             if len(files) > 1:
-                row.update(file=key[2], line=0, files=files, message=key[3])
+                row.update(file=key[3], line=0, files=files, message=key[4],
+                           spots=sorted([i["file"], i["line"]] for i in items))
             rows.append(row)
     severity = {"error": 0, "warning": 1}
     rows.sort(key=lambda r: (r["status"] != "new", r["muted"], severity.get(r["severity"], 2),
@@ -485,6 +486,18 @@ def check_issue(scratch):
             "skins": [result]}
 
 
+def rule_descriptions(scratch):
+    """Return kdk's one-line description of each rule id, or nothing when kdk cannot list them."""
+    out = scratch / "rules"
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        done = subprocess.run(sandbox_command(out, out, "-m", "kdk", "rules", "--json"),
+                              capture_output=True, text=True, timeout=60)
+        return {r["id"]: r["description"] for r in json.loads(done.stdout)["rules"]}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
+        return {}
+
+
 def run_link():
     """Return the link to this workflow run's page, where the full report is."""
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
@@ -507,6 +520,7 @@ def cmd_check():
             facts = check_issue(scratch)
         else:
             facts = check_skins_pr(scratch)
+        facts["rules"] = rule_descriptions(scratch)
     except (SkinError, subprocess.CalledProcessError, urllib.error.URLError, OSError,
             ET.ParseError, KeyError, ValueError) as err:
         print(f"Skin check failed: {err!r}")
@@ -555,30 +569,39 @@ def plural(count, word):
     return f"{count} {word}{'s' if count != 1 else ''}"
 
 
-def place(row):
-    """Format where one row sits: its file and lines, or the languages it spans folded."""
-    if row.get("files"):
-        codes = ", ".join(plain(LANGUAGE_CODE.sub(r"\1", f)) for f in row["files"])
-        return f"<details><summary>{len(row['files'])} language files</summary>{codes}</details>"
+def places(row):
+    """List where one row sits: its file and lines, or each language file with its line."""
+    if row.get("spots"):
+        return [plain(LANGUAGE_CODE.sub(r"\1", file)) + (f" {line}" if line else "")
+                for file, line in row["spots"]]
     lines = row.get("lines") or ([row["line"]] if row["line"] else [])
-    return f"{cell(row['file'])} {', '.join(map(str, lines))}".rstrip()
+    return [f"{cell(row['file'])} {', '.join(map(str, lines))}".rstrip()]
 
 
-def grouped(rows):
-    """Group rows saying one thing as (check, severity, message, reason, rows), errors first."""
-    groups = {}
-    for row in rows:
-        key = (row["rule"], row["severity"], row["message"], row.get("reason", ""))
-        groups.setdefault(key, []).append(row)
-    order = sorted(groups.items(), key=lambda g: (g[0][1] != "error", -len(g[1]), g[0][2]))
-    return [(*key, items) for key, items in order]
+def where(rows):
+    """Format the places of some rows one per line, folding the rest past a few when over two."""
+    spots = [spot for row in rows for spot in places(row)]
+    if len(spots) <= PLACE_LIMIT + 2:
+        return "<br>".join(spots)
+    return ("<br>".join(spots[:PLACE_LIMIT]) + f"<details><summary>{len(spots) - PLACE_LIMIT} more"
+            "</summary>" + "<br>".join(spots[PLACE_LIMIT:]) + "</details>")
 
 
-def tidy(rule, message):
-    """Drop what a table row already shows from a message: its check's name and a folded line."""
-    if message.lower().startswith(f"{rule.lower()}: "):
-        message = message[len(rule) + 2:]
+def tidy(check, message):
+    """Drop what the comment already shows from a message: its check's name and a folded line."""
+    if message.lower().startswith(f"{check.lower()}: "):
+        message = message[len(check) + 2:]
     return FIRST_LINE.sub("", message)
+
+
+def by_subject(rows):
+    """Whether every row's message ends in a colon and its subject."""
+    return all(r["subject"] and r["message"].endswith(f": {r['subject']}") for r in rows)
+
+
+def count(rows):
+    """Count the findings some rows stand for."""
+    return sum(r["count"] for r in rows)
 
 
 def badges(rows, new=False):
@@ -591,84 +614,103 @@ def badges(rows, new=False):
                       + ("s" if n != 1 else "") for kind, n in sorted(counts.items()) if n)
 
 
-def table(rows, room, mark=None):
+def table(rows, room, labelled=False):
     """Format findings as a table within a size cap, counting the problems left out."""
-    lines = ["| | Problem | Count | Where |", "| :-: | --- | --: | --- |"]
+    named = not labelled and by_subject(rows)
+    groups = defaultdict(list)
+    for row in rows:
+        text = row["subject"] if named else row["message"]
+        groups[(text, row["reason"], row["check"])].append(row)
+    order = sorted(groups.items(), key=lambda g: (-count(g[1]), g[0][0]))
+    lines = ["| Finding | Count | Where |", "| --- | --: | --- |"]
     used = sum(len(line) + 1 for line in lines)
-    groups = grouped(rows)
-    for shown, (rule, severity, message, reason, items) in enumerate(groups):
-        places = [place(r) for r in items]
-        where = "<br>".join(places[:PLACE_LIMIT])
-        if len(places) > PLACE_LIMIT:
-            rest = "<br>".join(places[PLACE_LIMIT:])
-            where += (f"<details><summary>{len(places) - PLACE_LIMIT} more files</summary>"
-                      f"{rest}</details>")
-        icon = mark or (MUTED_ICON if reason else SEVERITY_ICONS.get(severity, "🔹"))
-        why = f"<br><sub>muted: {plain(reason)}</sub>" if reason else ""
-        check = f"{CHECK_ICONS.get(rule, '🔹')} {plain(rule)}: " if mark else ""
-        count = sum(r["count"] for r in items)
-        line = f"| {icon} | {check}{nice(tidy(rule, message))}{why} | {count} | {where} |"
+    for shown, ((text, reason, check), items) in enumerate(order):
+        finding = cell(text) if named else nice(tidy(check, text))
+        if labelled:
+            finding = f"{CHECK_ICONS.get(check, '🔹')} {finding}"
+        if reason:
+            finding = f"{MUTED_ICON} {finding}<br><sub>muted: {plain(reason)}</sub>"
+        line = f"| {finding} | {count(items)} | {where(items)} |"
         if used + len(line) + 1 > room:
-            return "\n".join(lines), len(groups) - shown
+            return "\n".join(lines), len(order) - shown
         lines.append(line)
         used += len(line) + 1
     return "\n".join(lines), 0
 
 
-def check_fold(rule, rows, room, mark=None, title=""):
-    """Format findings as a fold whose summary gives their counts, and what was cut."""
-    body, left = table(rows, room - 200, mark)
-    counts = Counter()
-    for row in rows:
-        counts[row["severity"]] += row["count"]
-    summary = title or (f"{CHECK_ICONS.get(rule, '🔹')} <b>{plain(rule)}</b> · " + " · ".join(
-        f"{SEVERITY_ICONS.get(kind, '🔹')} {n}" for kind, n in sorted(counts.items()) if n))
+def fold(summary, rows, room, labelled=False):
+    """Format rows as a fold under a summary line; return it and how many problems were cut."""
+    body, left = table(rows, room - len(summary) - 80, labelled)
     more = f"\n\n{left} more not shown." if left else ""
     return f"<details><summary>{summary}</summary>\n\n{body}{more}\n\n</details>", left
 
 
-def by_rule(rows):
-    """Split rows by check, the checks with the most errors and then warnings first."""
-    checks = defaultdict(list)
+def severity_counts(rows):
+    """Format the error, warning and muted counts of some rows as short icon pairs."""
+    counts = Counter()
     for row in rows:
-        checks[row["rule"]].append(row)
-
-    def weight(item):
-        """Sort key: most errors, then most warnings, then the check's name."""
-        errors = sum(r["count"] for r in item[1] if r["severity"] == "error")
-        return (-errors, -sum(r["count"] for r in item[1]), item[0])
-    return sorted(checks.items(), key=weight)
+        counts["muted" if row["muted"] else row["severity"]] += row["count"]
+    icons = {**SEVERITY_ICONS, "muted": MUTED_ICON}
+    return " · ".join(f"{icon} {counts[kind]}" for kind, icon in icons.items() if counts[kind])
 
 
-def skin_lines(skin, run, room):
-    """Format one skin's comment part: heading, counts, notes, folds and base totals."""
+def weight(rows):
+    """Sort key putting the most unmuted errors first, then the most findings."""
+    return (-sum(r["count"] for r in rows if r["severity"] == "error" and not r["muted"]),
+            -count(rows))
+
+
+def check_parts(check, rows, rules, room):
+    """Format one check: a heading with its counts, a fold per rule and severity; count the cuts."""
+    parts = [f"**{CHECK_ICONS.get(check, '🔹')} {plain(check)}** · {severity_counts(rows)}"]
+    used, cut = len(parts[0]) + 2, 0
+    by_rule = defaultdict(list)
+    for row in rows:
+        by_rule[(row["rule"], row["severity"])].append(row)
+    for (rule, severity), items in sorted(by_rule.items(), key=lambda r: weight(r[1])):
+        if used > room - 300:
+            cut += 1
+            continue
+        heading = rules.get(rule) or tidy(check, items[0]["message"])
+        summary = f"{SEVERITY_ICONS.get(severity, '🔹')} {count(items)} · {plain(heading)}"
+        part, left = fold(summary, items, room - used)
+        parts.append(part)
+        used += len(part) + 2
+        cut += bool(left)
+    return parts, used, cut
+
+
+def skin_lines(skin, run, room, rules):
+    """Format one skin's comment part: heading, counts, notes, checks, fixed rows, base totals."""
     against = RELEASE_NAMES.get(skin["release"], skin["release"])
     new = [r for r in skin["rows"] if r["status"] == "new"]
     shown = [r for r in new if not r["muted"]]
     fixed = [r for r in skin["rows"] if r["status"] == "fixed" and not r["muted"]]
-    fixed_count = sum(r["count"] for r in fixed)
     parts = [f"### 🎨 Skin check · {code(skin['id'] + ' ' + skin['version'])}"]
     if skin["new_skin"]:
         parts.append(f"🆕 New skin, checked against {against}\n\n"
                      + (badges(shown) or "✅ No problems found"))
     else:
         counts = badges(shown, new=True) or "✅ No new problems"
-        if fixed_count:
-            counts += f" · ✅ **{fixed_count}** fixed"
+        if fixed:
+            counts += f" · ✅ **{count(fixed)}** fixed"
         parts.append(f"Checked against {against}\n\n{counts}")
     parts += [f"> ℹ️ {nice(notice)}" for notice in skin["notices"]]
     used, cut = sum(len(p) + 2 for p in parts), 0
-    for rule, rows in by_rule(new):
+    checks = defaultdict(list)
+    for row in new:
+        checks[row["check"]].append(row)
+    for check, rows in sorted(checks.items(), key=lambda c: (weight(c[1]), c[0])):
         if used > room - 400:
             cut += 1
             continue
-        fold, left = check_fold(rule, rows, room - used)
-        parts.append(fold)
-        used += len(fold) + 2
-        cut += bool(left)
+        more, size, left = check_parts(check, rows, rules, room - used)
+        parts += more
+        used += size
+        cut += left
     if fixed and used < room - 400:
-        fold, left = check_fold("", fixed, room - used, "✅", f"✅ <b>Fixed</b> · {fixed_count}")
-        parts.append(fold)
+        part, left = fold(f"✅ <b>Fixed</b> · {count(fixed)}", fixed, room - used, labelled=True)
+        parts.append(part)
         cut += bool(left)
     if cut:
         parts.append(f"Not everything fits in a comment; the [run's summary]({run}) lists every "
@@ -687,7 +729,7 @@ def skin_text(facts):
         return "### 🎨 Skin check\n\n⚠️ Not checked: no skin was found to check."
     room = COMMENT_LIMIT // len(facts["skins"])
     parts = [part for skin in facts["skins"]
-             for part in skin_lines(skin, facts.get("run", ""), room)]
+             for part in skin_lines(skin, facts.get("run", ""), room, facts.get("rules") or {})]
     versions = sorted({s["kdk"] for s in facts["skins"] if s["kdk"]})
     parts.append(f"<sub>kdk {', '.join(versions) or 'unknown'} · checked {facts['checked']}.</sub>")
     return "\n\n".join(parts)
@@ -695,20 +737,20 @@ def skin_text(facts):
 
 def report_rows(skin):
     """Format one skin's findings as a table per check, new and muted ones marked."""
-    new = {(r["rule"], r["file"], r["line"], r["message"]) for r in skin["rows"]
+    new = {(r["check"], r["file"], r["line"], r["message"]) for r in skin["rows"]
            if r["status"] == "new" and not r.get("files")}
-    new_files = {(r["rule"], f) for r in skin["rows"] if r["status"] == "new"
+    new_files = {(r["check"], f) for r in skin["rows"] if r["status"] == "new"
                  for f in r.get("files", ())}
-    by_rule = defaultdict(list)
+    by_check = defaultdict(list)
     for row in skin["all"]:
-        by_rule[row["rule"]].append(row)
+        by_check[row["check"]].append(row)
     lines = []
-    for rule, rows in sorted(by_rule.items()):
-        lines += [f"### {rule} ({len(rows)})", "", "| | Severity | Where | Finding |",
+    for check, rows in sorted(by_check.items()):
+        lines += [f"### {check} ({len(rows)})", "", "| | Severity | Where | Finding |",
                   "|---|---|---|---|"]
         for r in sorted(rows, key=lambda r: (r["file"], r["line"])):
-            mark = "new" if ((r["rule"], r["file"], r["line"], r["message"]) in new
-                             or (r["rule"], r["file"]) in new_files) else ""
+            mark = "new" if ((r["check"], r["file"], r["line"], r["message"]) in new
+                             or (r["check"], r["file"]) in new_files) else ""
             where = r["file"] + (f":{r['line']}" if r["line"] else "")
             lines.append(f"| {'muted' if r['muted'] else mark} | {r['severity']} | {cell(where)} "
                          f"| {cell(r['message'])} |")
