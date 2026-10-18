@@ -319,7 +319,7 @@ def findings(run):
 
 
 def compared(changes, runs):
-    """Turn kdk compare rows into finding rows with their status, count and any folded files."""
+    """Turn kdk compare rows into finding rows with their status, count and any folded places."""
     checks = {item.get("rule"): category for run in runs if run
               for category, items in (run.get("categories") or {}).items() for item in items}
     rows = []
@@ -327,7 +327,7 @@ def compared(changes, runs):
         row = finding(checks.get(item.get("rule"), ""), item)
         row.update(status=item.get("status", ""), count=item.get("count", 1))
         if item.get("files"):
-            row["files"] = item["files"]
+            row.update(files=item["files"], lines=item.get("lines") or [0] * len(item["files"]))
         rows.append(row)
     return rows
 
@@ -595,11 +595,12 @@ def problem_name(kind, rows, rules):
 
 
 def files_of(rows):
-    """Return (file, count, lines) per file, most found first, and the folded languages."""
+    """Return (file, count, lines) per file, most found first, and (language, line) pairs."""
     files, languages = {}, []
     for row in rows:
         if row.get("files"):
-            languages += [LANGUAGE_CODE.sub(r"\1", f) for f in row["files"]]
+            languages += [(LANGUAGE_CODE.sub(r"\1", f), line)
+                          for f, line in zip(row["files"], row["lines"], strict=False)]
             continue
         entry = files.setdefault(row["file"], [0, set()])
         entry[0] += row["count"]
@@ -613,7 +614,7 @@ def files_of(rows):
 def spread(rows):
     """Count the files some rows span, each language file counted once."""
     listed, languages = files_of(rows)
-    return len(listed) + len(set(languages))
+    return len(listed) + len({language for language, _ in languages})
 
 
 def line_list(lines):
@@ -640,9 +641,11 @@ def file_table(rows, files_shown=None):
         rest = listed[len(shown):]
         lines.append(f"| and {plural(len(rest), 'more file')} | {sum(n for _, n, _ in rest)} | |")
     if languages:
-        named = ", ".join(plain(language) for language in sorted(set(languages)))
-        lines.append(f"| `strings.po` in {plural(len(set(languages)), 'language')} | "
-                     f"{len(languages)} | {named} |")
+        named = ", ".join(plain(language) + (f" {line}" if line else "")
+                          for language, line in languages)
+        total = len({language for language, _ in languages})
+        lines.append(f"| `strings.po` in {plural(total, 'language')} | {len(languages)} | "
+                     f"{named} |")
     return "\n".join(lines)
 
 

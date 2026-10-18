@@ -56,11 +56,11 @@ def changes(base, head):
 
 
 def folded(rule, severity, languages, line, message, status="new"):
-    """Return a kdk compare row folded across the strings.po of some languages."""
+    """Return a kdk compare row folded across the strings.po of some languages, a line apart."""
     files = [PO.format(language) for language in languages]
     return {"rule": rule, "severity": severity, "file": files[0], "line": line, "subject": "",
             "message": message.format(file=files[0]), "status": status, "count": len(files),
-            "files": files}
+            "files": files, "lines": [line + n for n in range(len(files))]}
 
 
 class LinkTests(unittest.TestCase):
@@ -368,16 +368,16 @@ class RenderTests(unittest.TestCase):
         return self.facts(None, head, report)
 
     def test_language_rows_share_one_row(self):
-        """Translation files kdk folded share one table row naming each language."""
+        """Translation files kdk folded share one table row naming each language with its line."""
         text = skin.skin_text(self.language_facts("de_de", "en_gb"))
-        self.assertIn("| `strings.po` in 2 languages | 2 | de\\_de, en\\_gb |", text)
+        self.assertIn("| `strings.po` in 2 languages | 2 | de\\_de 9, en\\_gb 10 |", text)
         self.assertIn("<code>2</code> in 2 files", text)
         self.assertIn("for example `language/resource.language.de_de/strings.po` line 9", text)
 
     def test_language_codes_are_escaped(self):
         """A language folder name from the skin cannot inject HTML outside a code span."""
         text = skin.skin_text(self.language_facts("<img src=x>", "en_gb"))
-        self.assertIn("&lt;img src=x&gt;, en\\_gb", text)
+        self.assertIn("&lt;img src=x&gt; 9, en\\_gb 10", text)
         self.assertNotIn("<img", re.sub(r"`[^`]*`", "", text))
 
     def test_skin_text_cannot_ping_link_or_break_the_table(self):
