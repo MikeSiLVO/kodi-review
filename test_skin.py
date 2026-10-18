@@ -21,15 +21,46 @@ SKIN_ADDON = ('<?xml version="1.0"?><addon id="skin.test" version="1.2.0">'
               '<extension point="xbmc.gui.skin"/></addon>')
 
 
+PO = "language/resource.language.{}/strings.po"
+
+
 def run(*rows, errors=0, warnings=0, muted=0):
     """Return a kdk report of findings given as (check, severity, file, line, message[, fields])."""
     categories = {}
     for check, severity, file, line, message, *fields in rows:
-        item = {"severity": severity, "file": file, "line": line, "message": message,
-                **(fields[0] if fields else {})}
+        item = {"rule": f"{check.split()[0].lower()}.test", "subject": "", "severity": severity,
+                "file": file, "line": line, "message": message, **(fields[0] if fields else {})}
         categories.setdefault(check, []).append(item)
-    return {"kdk_version": "2.1.0", "errors": errors, "warnings": warnings, "muted": muted,
+    return {"kdk_version": "3.0.1", "errors": errors, "warnings": warnings, "muted": muted,
             "notices": [], "categories": categories}
+
+
+def changes(base, head):
+    """Stand in for kdk compare, matching findings by rule, subject, file and message."""
+    def items(report):
+        return [i for rows in (report or {}).get("categories", {}).values() for i in rows]
+
+    def same(a, b):
+        return all(a.get(key) == b.get(key) for key in ("rule", "subject", "file", "message"))
+
+    left, rows = items(base), []
+    for item in items(head):
+        match = next((b for b in left if same(b, item)), None)
+        if match:
+            left.remove(match)
+        if item.get("muted") and not (match or {}).get("muted"):
+            rows.append({**item, "status": "muted"})
+        elif not match:
+            rows.append({**item, "status": "new"})
+    return {"rows": rows + [{**b, "status": "fixed"} for b in left]}
+
+
+def folded(rule, severity, languages, line, message, status="new"):
+    """Return a kdk compare row folded across the strings.po of some languages."""
+    files = [PO.format(language) for language in languages]
+    return {"rule": rule, "severity": severity, "file": files[0], "line": line, "subject": "",
+            "message": message.format(file=files[0]), "status": status, "count": len(files),
+            "files": files}
 
 
 class LinkTests(unittest.TestCase):
@@ -207,57 +238,36 @@ class SkinLookupTests(unittest.TestCase):
 
 
 class CompareTests(unittest.TestCase):
-    """Telling new findings from ones already there, folding repeats across language files."""
+    """Reading kdk's compare rows into the rows the comment is made from."""
 
-    def test_new_and_fixed(self):
-        """A finding only on head is new, only on base fixed; lines moving changes nothing."""
-        base = run(("Fonts", "warning", "xml/Font.xml", 10, "Unused font: a"),
-                   ("Includes", "error", "xml/Home.xml", 5, "Include not defined: x"))
-        head = run(("Fonts", "warning", "xml/Font.xml", 12, "Unused font: a"),
-                   ("Variables", "error", "xml/Colors.xml", 140, "Duplicate variable 'c'"))
-        rows = skin.compare(base, head)
-        self.assertEqual([(r["status"], r["message"]) for r in rows],
-                         [("new", "Duplicate variable 'c'"), ("fixed", "Include not defined: x")])
+    def test_rows_take_their_check_from_either_run(self):
+        """A new row is named by head's check and a fixed one by base's."""
+        base = run(("Fonts", "warning", "xml/Font.xml", 10, "Unused font: a",
+                    {"rule": "fonts.unused", "subject": "a"}))
+        head = run(("Variables", "error", "xml/Colors.xml", 140, "Duplicate variable 'c'",
+                    {"rule": "vars.duplicate", "subject": "c"}))
+        rows = skin.compared(changes(base, head), (head, base))
+        self.assertEqual([(r["status"], r["check"], r["rule"], r["count"]) for r in rows],
+                         [("new", "Variables", "vars.duplicate", 1),
+                          ("fixed", "Fonts", "fonts.unused", 1)])
 
-    def test_language_files_fold(self):
-        """One string finding repeated in every language is one row naming its files."""
-        po = "language/resource.language.{}/strings.po"
-        base = run(("Kodi Repo", "warning", po.format("en_gb"), 1100,
-                    "id 31496 twice (first on line 900)"))
-        head = run(*[("Kodi Repo", "warning", po.format(lang), 1069,
-                      f"id 31496 twice (first on line {962 + n})")
-                     for n, lang in enumerate(("en_gb", "af_za", "de_de"))])
-        rows = skin.compare(base, head)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual((rows[0]["count"], rows[0]["file"], rows[0]["message"]),
-                         (2, "language/*/strings.po", "id 31496 twice (first on line #)"))
-        self.assertEqual(len(rows[0]["files"]), 3)
+    def test_folded_row_keeps_its_files_without_its_path(self):
+        """A row kdk folded across languages keeps its count and files, its message no path."""
+        head = run(("Kodi Repo", "warning", PO.format("am_et"), 200, "x",
+                    {"rule": "repo.po-parse"}))
+        report = {"rows": [folded("repo.po-parse", "warning", ("am_et", "ar_sa", "bg_bg"), 200,
+                                  "Kodi repo: {file}: unescaped double quote found")]}
+        [row] = skin.compared(report, (head, None))
+        self.assertEqual((row["check"], row["count"], len(row["files"]), row["message"]),
+                         ("Kodi Repo", 3, 3, "Kodi repo: unescaped double quote found"))
 
-    def test_language_rows_fold_without_their_path(self):
-        """A message naming its own file's path folds across languages like any other."""
-        po = "language/resource.language.{}/strings.po"
-        head = run(*[("Kodi Repo", "warning", po.format(lang), 7,
-                      f"Kodi repo: {po.format(lang)}: unescaped double quote found")
-                     for lang in ("am_et", "ar_sa", "bg_bg")])
-        rows = skin.compare(None, head)
-        self.assertEqual([(r["message"], len(r["files"])) for r in rows],
-                         [("Kodi repo: unescaped double quote found", 3)])
-
-    def test_no_base_makes_all_new(self):
-        """A skin with no base has every finding new, repeats counted once per row."""
-        head = run(("IDs", "error", "xml/a.xml", 1, "Window id: 0"),
-                   ("IDs", "error", "xml/a.xml", 1, "Window id: 0"))
-        rows = skin.compare(None, head)
-        self.assertEqual([(r["status"], r["count"]) for r in rows], [("new", 2)])
-
-    def test_muted_stays_apart(self):
-        """A finding muted on head is a separate row from the same finding unmuted on base."""
-        base = run(("Labels", "warning", "xml/a.xml", 3, "Label not translated: x"))
-        head = run(("Labels", "warning", "xml/a.xml", 3, "Label not translated: x",
-                    {"muted": {"reason": "theme name"}}))
-        rows = skin.compare(base, head)
-        self.assertEqual([(r["status"], r["muted"]) for r in rows],
-                         [("new", True), ("fixed", False)])
+    def test_muted_row_keeps_its_reason(self):
+        """A row the skin muted keeps the reason its kdk-ignore comment gives."""
+        head = run(("Labels", "warning", "xml/a.xml", 3, "Not translated",
+                    {"muted": {"line": 2, "reason": "theme name"}}))
+        [row] = skin.compared(changes(run(), head), (head, None))
+        self.assertEqual((row["status"], row["muted"], row["reason"]),
+                         ("muted", True, "theme name"))
 
 
 class RenderTests(unittest.TestCase):
@@ -266,11 +276,12 @@ class RenderTests(unittest.TestCase):
     RULES = {"vars.duplicate": "A variable defined twice.", "fonts.unused": "A font nothing uses.",
              "ids.use-name": "A window referred to by number where its name works."}
 
-    def facts(self, base, head):
-        """Return skin.json facts for one skin compared from the two reports."""
-        rows, head_rows = skin.compare(base, head), skin.findings(head)
+    def facts(self, base, head, report=None):
+        """Return skin.json facts for one skin, compared from the two reports unless given."""
+        report = report or changes(base, head)
+        rows, head_rows = skin.compared(report, (head, base)), skin.findings(head)
         result = {"id": "skin.test", "version": "1.2.0", "release": "piers", "branch": "piers",
-                  "kdk": "2.1.0", "notices": [], "new_skin": base is None,
+                  "kdk": "3.0.1", "notices": [], "new_skin": base is None,
                   "head": skin.totals(head), "base": skin.totals(base) if base else None,
                   "rows": rows, "existing": skin.existing(head_rows, rows) if base else [],
                   "all": head_rows}
@@ -299,7 +310,7 @@ class RenderTests(unittest.TestCase):
             "\n\n1 new error and 2 new warnings. 1 fixed, 1 already there before 1.2.0.\n\n"
             "<details open><summary>🔴 <b>1 new error, 1 kind</b></summary>\n\n<dl><dd>"))
         self.assertIn("<details><summary>🟡 <b>2 new warnings, 1 kind</b></summary>", text)
-        self.assertTrue(text.endswith("<sub>kdk 2.1.0 · checked aaaa against bbbb.</sub>"))
+        self.assertTrue(text.endswith("<sub>kdk 3.0.1 · checked aaaa against bbbb.</sub>"))
         self.assertNotIn("actions/runs", text)
 
     def test_kind_fold_holds_an_example_and_its_places(self):
@@ -349,23 +360,24 @@ class RenderTests(unittest.TestCase):
         many = run(*[("IDs", "error", "xml/a.xml", n, "Window id: 0") for n in range(1, 31)])
         self.assertIn("21, 22, 23, 24, 25 and 5 more |", skin.skin_text(self.facts(None, many)))
 
+    def language_facts(self, *languages):
+        """Return facts for a new skin with one finding kdk folded across some languages."""
+        head = run(*[("Kodi Repo", "warning", PO.format(lang), 9, "Syntax error",
+                      {"rule": "repo.po-parse"}) for lang in languages])
+        report = {"rows": [folded("repo.po-parse", "warning", languages, 9, "Syntax error")]}
+        return self.facts(None, head, report)
+
     def test_language_rows_share_one_row(self):
-        """Translation files fold into one row naming each language with its line."""
-        po = "language/resource.language.{}/strings.po"
-        head = run(*[("Kodi Repo", "warning", po.format(lang), 9 + n,
-                      f"Kodi repo: string id 31496 is defined twice (first on line {n})")
-                     for n, lang in enumerate(("en_gb", "de_de"))])
-        text = skin.skin_text(self.facts(None, head))
-        self.assertIn("| `strings.po` in 2 languages | 2 | de\\_de 10, en\\_gb 9 |", text)
+        """Translation files kdk folded share one table row naming each language."""
+        text = skin.skin_text(self.language_facts("de_de", "en_gb"))
+        self.assertIn("| `strings.po` in 2 languages | 2 | de\\_de, en\\_gb |", text)
         self.assertIn("<code>2</code> in 2 files", text)
+        self.assertIn("for example `language/resource.language.de_de/strings.po` line 9", text)
 
     def test_language_codes_are_escaped(self):
         """A language folder name from the skin cannot inject HTML outside a code span."""
-        po = "language/resource.language.{}/strings.po"
-        head = run(*[("Kodi Repo", "warning", po.format(lang), 9, "Syntax error")
-                     for lang in ("<img src=x>", "en_gb")])
-        text = skin.skin_text(self.facts(None, head))
-        self.assertIn("&lt;img src=x&gt; 9", text)
+        text = skin.skin_text(self.language_facts("<img src=x>", "en_gb"))
+        self.assertIn("&lt;img src=x&gt;, en\\_gb", text)
         self.assertNotIn("<img", re.sub(r"`[^`]*`", "", text))
 
     def test_skin_text_cannot_ping_link_or_break_the_table(self):

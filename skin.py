@@ -45,9 +45,7 @@ LINK = re.compile(r"https://[^\s<>()\[\]`'\"]+")
 REVISION = re.compile(r"\w[\w./-]{0,99}")
 GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
-LANGUAGE_FILE = re.compile(r"language/resource\.language\.[^/]+/strings\.po")
 LANGUAGE_CODE = re.compile(r"language/resource\.language\.([^/]+)/strings\.po")
-LINE_NUMBER = re.compile(r"\bline \d+")
 NAME = re.compile(r"'([^'\n]{1,120})'|(</?[A-Za-z][^<>\n]{0,80}>)|(?<=: )([^\s'`<>]+)$")
 FIRST_LINE = re.compile(r"\s*\([^()]*\bline #[^()]*\)")
 MARKUP = re.compile(r"([\\`*_\[\]#|~!])")
@@ -265,27 +263,31 @@ def check_sandbox(scratch):
         raise SkinError("kdk or its sandbox is unavailable")
 
 
-def run_kdk(tree, skin, release, kodi, out):
-    """Run kdk on one skin folder of a tree inside the sandbox; return its JSON report."""
+def run_kdk(tree, out, *args):
+    """Run a kdk command on a read-only tree inside the sandbox; return the JSON it writes."""
     out.mkdir(parents=True, exist_ok=True)
-    args = ["-m", "kdk", "validate", "--json", "--isolated", "--exit-zero",
-            "--release", release, "-o", "/out/run.json"]
-    if kodi:
-        args += ["--kodi-path", "/check"]
-    args.append(f"/check/{skin}")
+    command = sandbox_command(tree, out, "-m", "kdk", *args, "--json", "--exit-zero",
+                              "-o", "/out/kdk.json")
     try:
-        done = subprocess.run(sandbox_command(tree, out, *args), capture_output=True, text=True,
-                              timeout=KDK_TIMEOUT)
+        done = subprocess.run(command, capture_output=True, text=True, timeout=KDK_TIMEOUT)
     except subprocess.TimeoutExpired as err:
         raise SkinError(f"kdk did not finish in {KDK_TIMEOUT // 60} minutes") from err
     if done.returncode == 0:
-        return json.loads((out / "run.json").read_text())
+        return json.loads((out / "kdk.json").read_text())
     try:
         reason = json.loads(done.stdout).get("error")
     except (json.JSONDecodeError, AttributeError):
         reason = None
     print(done.stderr[-4000:], file=sys.stderr)
     raise SkinError(f"kdk could not finish: {reason or f'exit {done.returncode}'}")
+
+
+def validate(tree, skin, release, kodi, out):
+    """Run kdk validate on one skin folder of a tree; return its report."""
+    args = ["validate", "--isolated", "--release", release]
+    if kodi:
+        args += ["--kodi-path", "/check"]
+    return run_kdk(tree, out, *args, f"/check/{skin}")
 
 
 def mute_reason(item):
@@ -302,45 +304,31 @@ def own_file_dropped(item):
     return message.replace(f"{file}: ", "", 1) if file else message
 
 
+def finding(check, item):
+    """Return one kdk finding as a row of check, rule, subject, severity, place, message, mute."""
+    return {"check": check, "rule": item.get("rule", ""), "subject": item.get("subject", ""),
+            "severity": item.get("severity", ""), "file": item.get("file", ""),
+            "line": item.get("line") or 0, "message": own_file_dropped(item),
+            "muted": bool(item.get("muted")), "reason": mute_reason(item)}
+
+
 def findings(run):
-    """Flatten a kdk report into rows of check, rule, subject, severity, place, message and mute."""
-    return [{"check": category, "rule": item.get("rule", ""), "subject": item.get("subject", ""),
-             "severity": item.get("severity", ""), "file": item.get("file", ""),
-             "line": item.get("line") or 0, "message": own_file_dropped(item),
-             "muted": bool(item.get("muted")), "reason": mute_reason(item)}
+    """Flatten a kdk report into finding rows."""
+    return [finding(category, item)
             for category, items in (run.get("categories") or {}).items() for item in items]
 
 
-def fold_key(row):
-    """Return a finding's match key across runs, one for a finding in every language file."""
-    if LANGUAGE_FILE.fullmatch(row["file"]):
-        return (row["check"], row["rule"], row["severity"], "language/*/strings.po",
-                LINE_NUMBER.sub("line #", row["message"]), row["muted"])
-    return (row["check"], row["rule"], row["severity"], row["file"], row["message"], row["muted"])
-
-
-def compare(base, head):
-    """Compare two kdk reports: rows new on head and fixed since base, all new without a base."""
-    groups = {"head": defaultdict(list), "base": defaultdict(list)}
-    for side, run in (("head", head), ("base", base)):
-        for row in findings(run) if run else []:
-            groups[side][fold_key(row)].append(row)
+def compared(changes, runs):
+    """Turn kdk compare rows into finding rows with their status, count and any folded files."""
+    checks = {item.get("rule"): category for run in runs if run
+              for category, items in (run.get("categories") or {}).items() for item in items}
     rows = []
-    for status, mine, theirs in (("new", "head", "base"), ("fixed", "base", "head")):
-        for key, items in groups[mine].items():
-            extra = len(items) - len(groups[theirs].get(key, ()))
-            if extra <= 0:
-                continue
-            files = sorted({i["file"] for i in items})
-            row: dict[str, Any] = {**items[-1], "status": status, "count": extra,
-                                   "lines": sorted({i["line"] for i in items if i["line"]})}
-            if len(files) > 1:
-                row.update(file=key[3], line=0, files=files, message=key[4],
-                           spots=sorted([i["file"], i["line"]] for i in items))
-            rows.append(row)
-    severity = {"error": 0, "warning": 1}
-    rows.sort(key=lambda r: (r["status"] != "new", r["muted"], severity.get(r["severity"], 2),
-                             r["file"], r["line"], r["message"]))
+    for item in changes.get("rows") or []:
+        row = finding(checks.get(item.get("rule"), ""), item)
+        row.update(status=item.get("status", ""), count=item.get("count", 1))
+        if item.get("files"):
+            row["files"] = item["files"]
+        rows.append(row)
     return rows
 
 
@@ -354,7 +342,7 @@ def existing(head_rows, rows):
     """Count the unmuted head findings per kind that are not new: [check, rule, severity, n]."""
     counts = Counter((r["check"], r["rule"], r["severity"]) for r in head_rows if not r["muted"])
     for row in rows:
-        if row["status"] == "new" and not row["muted"]:
+        if row["status"] == "new":
             counts[(row["check"], row["rule"], row["severity"])] -= row["count"]
     return [[*kind, n] for kind, n in counts.items() if n > 0]
 
@@ -364,9 +352,11 @@ def skin_result(head, base, release, kodi, branch):
     tree, skin = head
     info = addon_info(tree / skin / "addon.xml") or {}
     out = tree.parent / f"out-{tree.name}"
-    head_run = run_kdk(tree, skin, release, kodi, out / "head")
-    base_run = run_kdk(base[0], base[1], release, kodi, out / "base") if base else None
-    rows, head_rows = compare(base_run, head_run), findings(head_run)
+    head_run = validate(tree, skin, release, kodi, out / "head")
+    base_run = validate(base[0], base[1], release, kodi, out / "base") if base else None
+    sides = ["/check/base/kdk.json"] * bool(base_run) + ["/check/head/kdk.json"]
+    changes = run_kdk(out, out, "compare", *sides)
+    rows, head_rows = compared(changes, (head_run, base_run)), findings(head_run)
     return {"id": info.get("id") or Path(skin).name, "version": info.get("version", ""),
             "release": release, "branch": branch, "kdk": head_run.get("kdk_version", ""),
             "notices": head_run.get("notices") or [], "new_skin": base_run is None,
@@ -605,15 +595,16 @@ def problem_name(kind, rows, rules):
 
 
 def files_of(rows):
-    """Return (file, count, lines) per file, most found first, and (language, line) pairs."""
+    """Return (file, count, lines) per file, most found first, and the folded languages."""
     files, languages = {}, []
     for row in rows:
-        if row.get("spots"):
-            languages += [(LANGUAGE_CODE.sub(r"\1", f), line) for f, line in row["spots"]]
+        if row.get("files"):
+            languages += [LANGUAGE_CODE.sub(r"\1", f) for f in row["files"]]
             continue
         entry = files.setdefault(row["file"], [0, set()])
         entry[0] += row["count"]
-        entry[1].update(row.get("lines") or ([row["line"]] if row["line"] else []))
+        if row["line"]:
+            entry[1].add(row["line"])
     listed = sorted(((f, n, sorted(lines)) for f, (n, lines) in files.items()),
                     key=lambda e: (-e[1], e[0]))
     return listed, sorted(languages)
@@ -622,7 +613,7 @@ def files_of(rows):
 def spread(rows):
     """Count the files some rows span, each language file counted once."""
     listed, languages = files_of(rows)
-    return len(listed) + len({code for code, _ in languages})
+    return len(listed) + len(set(languages))
 
 
 def line_list(lines):
@@ -634,11 +625,7 @@ def line_list(lines):
 def example(kind, rows):
     """Format a kind's rule id, one place it was found at and that place's message."""
     first = rows[0]
-    if first.get("spots"):
-        file, line = first["spots"][0]
-    else:
-        file, line = first["file"], (first.get("lines") or [first["line"]])[0]
-    where = code(file) + (f" line {line}" if line else "")
+    where = code(first["file"]) + (f" line {first['line']}" if first["line"] else "")
     message = tidy(kind[0], first["message"])
     return f"{code(kind[1] or kind[0])} · for example {where}: {code(message)}"
 
@@ -653,11 +640,9 @@ def file_table(rows, files_shown=None):
         rest = listed[len(shown):]
         lines.append(f"| and {plural(len(rest), 'more file')} | {sum(n for _, n, _ in rest)} | |")
     if languages:
-        named = ", ".join(plain(language) + (f" {line}" if line else "")
-                          for language, line in languages)
-        total = len({language for language, _ in languages})
-        lines.append(f"| `strings.po` in {plural(total, 'language')} | {len(languages)} | "
-                     f"{named} |")
+        named = ", ".join(plain(language) for language in sorted(set(languages)))
+        lines.append(f"| `strings.po` in {plural(len(set(languages)), 'language')} | "
+                     f"{len(languages)} | {named} |")
     return "\n".join(lines)
 
 
@@ -727,8 +712,8 @@ def verdict(skin, new, muted, fixed, there):
 
 def skin_body(skin, rules, files_shown, bare):
     """Format one skin's part of the comment with some kinds' tables left out; return its kinds."""
-    new = [r for r in skin["rows"] if r["status"] == "new" and not r["muted"]]
-    muted = [r for r in skin["rows"] if r["status"] == "new" and r["muted"]]
+    new = [r for r in skin["rows"] if r["status"] == "new"]
+    muted = [r for r in skin["rows"] if r["status"] == "muted"]
     fixed = [r for r in skin["rows"] if r["status"] == "fixed" and not r["muted"]]
     there = [((c, r, s), n, []) for c, r, s, n in skin.get("existing", [])]
     there.sort(key=lambda k: (k[0][2] != "error", -k[1]))
@@ -789,9 +774,9 @@ def skin_text(facts):
 
 def report_rows(skin):
     """Format one skin's findings as a table per check, new and muted ones marked."""
-    new = {(r["check"], r["file"], r["line"], r["message"]) for r in skin["rows"]
+    new = {(r["rule"], r["subject"], r["file"], r["line"]) for r in skin["rows"]
            if r["status"] == "new" and not r.get("files")}
-    new_files = {(r["check"], f) for r in skin["rows"] if r["status"] == "new"
+    new_files = {(r["rule"], r["subject"], f) for r in skin["rows"] if r["status"] == "new"
                  for f in r.get("files", ())}
     by_check = defaultdict(list)
     for row in skin["all"]:
@@ -801,8 +786,8 @@ def report_rows(skin):
         lines += [f"### {check} ({len(rows)})", "", "| | Severity | Where | Finding |",
                   "|---|---|---|---|"]
         for r in sorted(rows, key=lambda r: (r["file"], r["line"])):
-            mark = "new" if ((r["check"], r["file"], r["line"], r["message"]) in new
-                             or (r["check"], r["file"]) in new_files) else ""
+            mark = "new" if ((r["rule"], r["subject"], r["file"], r["line"]) in new
+                             or (r["rule"], r["subject"], r["file"]) in new_files) else ""
             where = r["file"] + (f":{r['line']}" if r["line"] else "")
             lines.append(f"| {'muted' if r['muted'] else mark} | {r['severity']} | {cell(where)} "
                          f"| {cell(r['message'])} |")
