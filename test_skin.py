@@ -278,6 +278,14 @@ class FooterTests(unittest.TestCase):
                                         True)
         self.assertIn(f"(https://github.com/xbmc/xbmc/tree/{'a' * 40})", text)
 
+    def test_kdk_version_links_its_build(self):
+        """A build stamped with a commit links it, a release its tag, anything else nothing."""
+        self.assertEqual(skin.kdk_link("3.1.0+513cf7e"),
+                         "[kdk 3.1.0+513cf7e](https://github.com/MikeSiLVO/kdk/commit/513cf7e)")
+        self.assertEqual(skin.kdk_link("3.1.0"),
+                         "[kdk 3.1.0](https://github.com/MikeSiLVO/kdk/releases/tag/v3.1.0)")
+        self.assertEqual(skin.kdk_link("3.1.0-dev](x)"), "kdk `3.1.0-dev](x)`")
+
     def test_link_footer_opens_the_skin_files(self):
         """A GitHub link resolves to its commit, named as owner/repo@sha linked to its files."""
         answers = {"/repos/o/skin.x": {"default_branch": "main"},
@@ -363,7 +371,8 @@ class RenderTests(unittest.TestCase):
             "\n\n1 new error and 2 new warnings. 1 fixed, 1 already there before 1.2.0.\n\n"
             "<details open><summary>🔴 <b>1 new error, 1 kind</b></summary>\n\n<dl><dd>"))
         self.assertIn("<details><summary>🟡 <b>2 new warnings, 1 kind</b></summary>", text)
-        self.assertTrue(text.endswith("<sub>kdk 3.0.1 · checked aaaa against bbbb.</sub>"))
+        self.assertTrue(text.endswith("<sub>[kdk 3.0.1](https://github.com/MikeSiLVO/kdk/"
+                                      "releases/tag/v3.0.1) · checked aaaa against bbbb.</sub>"))
         self.assertNotIn("actions/runs", text)
 
     def test_kind_fold_holds_an_example_and_its_findings(self):

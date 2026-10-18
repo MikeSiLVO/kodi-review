@@ -43,6 +43,8 @@ REPORT_LIMIT = 900_000
 ASK_START = re.compile(r"@kodi-review", re.I)
 LINK = re.compile(r"https://[^\s<>()\[\]`'\"]+")
 REVISION = re.compile(r"\w[\w./-]{0,99}")
+KDK_REPO = "https://github.com/MikeSiLVO/kdk"
+KDK_VERSION = re.compile(r"(\d+(?:\.\d+)*)(?:\+([0-9a-f]{7,40}))?")
 ADDON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
@@ -798,6 +800,15 @@ def skin_part(skin, rules, room, run):
     return f"{head}\n\n{note}\n\n{rest}"[:room]
 
 
+def kdk_link(version):
+    """Link a kdk version to its build commit or release; any other text is shown unlinked."""
+    match = KDK_VERSION.fullmatch(version)
+    if not match:
+        return f"kdk {code(version)}"
+    target = f"commit/{match[2]}" if match[2] else f"releases/tag/v{match[1]}"
+    return f"[kdk {version}]({KDK_REPO}/{target})"
+
+
 def skin_text(facts):
     """Format the skin check comment from skin.json."""
     if "error" in facts:
@@ -808,7 +819,8 @@ def skin_text(facts):
     rules = facts.get("rules") or {}
     parts = [skin_part(skin, rules, room, facts.get("run", "")) for skin in facts["skins"]]
     versions = sorted({s["kdk"] for s in facts["skins"] if s["kdk"]})
-    parts.append(f"<sub>kdk {', '.join(versions) or 'unknown'} · checked {facts['checked']}.</sub>")
+    built = ", ".join(kdk_link(v) for v in versions) or "kdk unknown"
+    parts.append(f"<sub>{built} · checked {facts['checked']}.</sub>")
     return "\n\n".join(parts)
 
 
