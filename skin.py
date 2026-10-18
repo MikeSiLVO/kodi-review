@@ -521,16 +521,38 @@ def check_issue(scratch):
             "skins": [result]}
 
 
-def rule_descriptions(scratch):
-    """Return kdk's one-line description of each rule id, or nothing when kdk cannot list them."""
+def kdk_rules(scratch):
+    """Return kdk's rules with their descriptions and add-on checker levels, or none if it fails."""
     out = scratch / "rules"
     out.mkdir(parents=True, exist_ok=True)
     try:
         done = subprocess.run(sandbox_command(out, out, "-m", "kdk", "rules", "--json"),
                               capture_output=True, text=True, timeout=60)
-        return {r["id"]: r["description"] for r in json.loads(done.stdout)["rules"]}
+        return [r for r in json.loads(done.stdout)["rules"] if r.get("id")]
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
-        return {}
+        return []
+
+
+def raise_failing(skin, rules):
+    """Raise warnings of rules the Kodi add-on checker fails a pull request on to errors."""
+    moved = sum(r["rule"] in rules and r["severity"] == "warning" and not r["muted"]
+                for r in skin["all"])
+    skin["head"]["errors"] += moved
+    skin["head"]["warnings"] -= moved
+    for row in skin["rows"] + skin["all"]:
+        if row["rule"] in rules and row["severity"] == "warning":
+            row["severity"] = "error"
+            skin["raised"] = True
+    skin["existing"] = [[c, r, "error" if r in rules else s, n] for c, r, s, n in skin["existing"]]
+
+
+def add_rules(facts, scratch):
+    """Add kdk's rule descriptions and raise the checker's failures to errors."""
+    rules = kdk_rules(scratch)
+    facts["rules"] = {r["id"]: r.get("description", "") for r in rules}
+    failing = {r["id"] for r in rules if r.get("addon_checker") == "problem"}
+    for skin in facts.get("skins", []):
+        raise_failing(skin, failing)
 
 
 def run_link():
@@ -555,7 +577,7 @@ def cmd_check():
             facts = check_issue(scratch)
         else:
             facts = check_skins_pr(scratch)
-        facts["rules"] = rule_descriptions(scratch)
+        add_rules(facts, scratch)
     except (SkinError, subprocess.CalledProcessError, urllib.error.URLError, OSError,
             ET.ParseError, KeyError, ValueError) as err:
         print(f"Skin check failed: {err!r}")
@@ -765,6 +787,8 @@ def skin_body(skin, rules, rows_shown, bare):
     kinds = problems(new)
     parts = [f"**Skin check** · {code(skin['id'])} {plain(skin['version'])}{compared} · {against}",
              verdict(skin, new, muted, fixed, sum(n for _, n, _ in there))]
+    if skin.get("raised"):
+        parts.append("Kodi repo findings that fail the Kodi add-on checker count as errors.")
     parts += [f"> {nice(notice)}" for notice in skin["notices"]]
     for severity in ("error", "warning"):
         if part := severity_section(kinds, severity, rules, skin["new_skin"], rows_shown, bare):

@@ -143,7 +143,7 @@ def check(name, case, work):
         try:
             skin.check_sandbox(scratch / "probe")
             facts = run(scratch)
-            facts["rules"] = skin.rule_descriptions(scratch)
+            skin.add_rules(facts, scratch)
         except skin.SkinError as err:
             facts = {"key": "error", "error": str(err)}
     facts["run"] = "local"

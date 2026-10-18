@@ -395,6 +395,20 @@ class RenderTests(unittest.TestCase):
                       text)
         self.assertIn("<details><summary><b>1 already there before 1.2.0</b></summary>", text)
 
+    def test_checker_failures_count_as_errors(self):
+        """A warning the add-on checker fails a pull request on becomes an error, with a note."""
+        head = run(("Kodi Repo", "warning", "addon.xml", 33, "Kodi repo: <news> is 8902 characters",
+                    {"rule": "repo.schema"}),
+                   ("Kodi Repo", "warning", "a.pdf", 0, "Kodi repo: a.pdf has a file ending",
+                    {"rule": "repo.file-type"}), warnings=2)
+        facts = self.facts(None, head)
+        skin.raise_failing(facts["skins"][0], {"repo.schema"})
+        text = skin.skin_text(facts)
+        self.assertIn("1 error and 1 warning.\n\nKodi repo findings that fail the Kodi add-on "
+                      "checker count as errors.", text)
+        self.assertIn("🔴 <b>1 error, 1 kind</b>", text)
+        self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})
+
     def test_clean_update(self):
         """An update adding nothing says so and folds only what was already there."""
         same = run(("Fonts", "warning", "xml/Font.xml", 3, "Unused font: a"))
