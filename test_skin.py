@@ -127,6 +127,28 @@ class UnpackTests(unittest.TestCase):
                     self.root / "t")
         self.assertTrue((self.root / "t/top/skin.x/addon.xml").is_file())
 
+    def test_leaves_out_git_folders(self):
+        """A download's .git folder is left out, keeping a stranger's git config off the runner."""
+        file = stat.S_IFREG | 0o644
+        skin.unpack(self.zipped([("skin.x/.git/config", "[core]\nfsmonitor = sh evil", file),
+                                 ("skin.x/addon.xml", SKIN_ADDON, file)]), self.root / "z")
+        skin.unpack(self.tarred([("top/.git/config", b"x", tarfile.REGTYPE),
+                                 ("top/addon.xml", b"x", tarfile.REGTYPE)]), self.root / "t")
+        unpacked = [p.relative_to(self.root).as_posix() for p in self.root.rglob("*")
+                    if p.is_file() and p.parent != self.root]
+        self.assertEqual(sorted(unpacked), ["t/top/addon.xml", "z/skin.x/addon.xml"])
+
+    def test_drops_kodi_links(self):
+        """Links in Kodi's own folders are left out; a link in the skin still stops the unpack."""
+        archive = self.tarred([("system/settings/freebsd.xml", "linux.xml", tarfile.SYMTYPE),
+                               ("system/colors.xml", b"x", tarfile.REGTYPE)])
+        skin.unpack(archive, self.root / "k", ("system",))
+        self.assertEqual([p.name for p in (self.root / "k").rglob("*") if p.is_file()],
+                         ["colors.xml"])
+        archive = self.tarred([("addons/skin.estuary/media", "/etc", tarfile.SYMTYPE)])
+        with self.assertRaises(skin.SkinError):
+            skin.unpack(archive, self.root / "s", ("system",))
+
     def test_refuses_escapes_and_links(self):
         """Absolute paths, parent steps, backslashes, drives and links stop the unpack."""
         file, link = stat.S_IFREG | 0o644, stat.S_IFLNK | 0o777

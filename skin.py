@@ -127,13 +127,12 @@ def count_entry(totals, size):
         raise SkinError(f"the archive unpacks to more than {UNPACKED_LIMIT // 2**20} MB")
 
 
-def unpack_zip(archive, target):
-    """Unpack a zip into a folder after checking every entry."""
+def unpack_zip(archive, target, _dropped=()):
+    """Unpack a zip into a folder without .git, after checking every entry."""
     totals = [0, 0]
     with zipfile.ZipFile(archive) as zf:
-        entries = zf.infolist()
+        entries = [i for i in zf.infolist() if ".git" not in safe_name(i.filename)]
         for info in entries:
-            safe_name(info.filename)
             mode = info.external_attr >> 16
             if stat.S_ISLNK(mode) or (mode and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode))):
                 raise SkinError(f"the archive holds a link or special file: {info.filename[:200]}")
@@ -149,26 +148,26 @@ def unpack_zip(archive, target):
                     out.write(chunk)
 
 
-def unpack_tar(archive, target):
-    """Unpack a tar, compressed or not, after checking every entry."""
+def unpack_tar(archive, target, dropped=()):
+    """Unpack a tar without .git or symlinks in Kodi's folders, after checking every entry."""
     totals = [0, 0]
     with tarfile.open(archive) as tf:
-        members = tf.getmembers()
+        members = [m for m in tf.getmembers() if ".git" not in safe_name(m.name)
+                   and not (m.issym() and m.name.startswith(tuple(f"{d}/" for d in dropped)))]
         for member in members:
-            safe_name(member.name)
             if not (member.isfile() or member.isdir()):
                 raise SkinError(f"the archive holds a link or special file: {member.name[:200]}")
             count_entry(totals, member.size)
         tf.extractall(target, members=members, filter="data")
 
 
-def unpack(archive, target):
-    """Unpack a zip or tar archive into a folder, refusing links, escapes and oversized content."""
+def unpack(archive, target, dropped=()):
+    """Unpack an archive without .git, refusing escapes, bombs and links outside Kodi's folders."""
     target.mkdir(parents=True, exist_ok=True)
     with open(archive, "rb") as f:
         zipped = f.read(4) == b"PK\x03\x04"
     try:
-        (unpack_zip if zipped else unpack_tar)(archive, target)
+        (unpack_zip if zipped else unpack_tar)(archive, target, dropped)
     except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError, ValueError) as err:
         raise SkinError(f"could not unpack the archive: {err}") from err
 
@@ -210,7 +209,7 @@ def release_for(gui):
     return GUI_RELEASES.get(".".join(gui.split(".")[:2]))
 
 
-def git_tree(repo, sha, paths, target):
+def git_tree(repo, sha, paths, target, dropped=()):
     """Unpack the paths that exist at a commit of a GitHub repo; return the ones found."""
     work = target.parent / f".git-{sha[:12]}"
     if not work.exists():
@@ -225,7 +224,7 @@ def git_tree(repo, sha, paths, target):
     with open(archive, "wb") as out:
         subprocess.run(["git", "-C", str(work), "archive", "--format=tar", sha, "--", *listing],
                        stdout=out, check=True)
-    unpack(archive, target)
+    unpack(archive, target, dropped)
     archive.unlink()
     return listing
 
@@ -371,7 +370,8 @@ def check_kodi_pr(scratch):
         trees = {}
         for side, sha in (("head", head), ("base", base)):
             tree = scratch / side / Path(skin).name
-            if git_tree(REPO, sha, [skin, *KODI_PATHS], tree) and (tree / skin).is_dir():
+            if (git_tree(REPO, sha, [skin, *KODI_PATHS], tree, KODI_PATHS)
+                    and (tree / skin).is_dir()):
                 trees[side] = (tree, skin)
         if "head" in trees:
             results.append(skin_result(trees["head"], trees.get("base"), release, True))
