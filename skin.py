@@ -292,9 +292,9 @@ def mute_reason(item):
 
 
 def own_file_dropped(item):
-    """Return a finding's message without a leading copy of its own file path."""
+    """Return a finding's message without the copy of its own file path that kdk may put in it."""
     message, file = item.get("message", ""), item.get("file", "")
-    return message[len(file) + 2:] if file and message.startswith(f"{file}: ") else message
+    return message.replace(f"{file}: ", "", 1) if file else message
 
 
 def findings(run):

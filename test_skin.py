@@ -234,14 +234,14 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(len(rows[0]["files"]), 3)
 
     def test_language_rows_fold_without_their_path(self):
-        """A message opening with its own file's path folds across languages like any other."""
+        """A message naming its own file's path folds across languages like any other."""
         po = "language/resource.language.{}/strings.po"
         head = run(*[("Kodi Repo", "warning", po.format(lang), 7,
-                      f"{po.format(lang)}: unescaped double quote found")
+                      f"Kodi repo: {po.format(lang)}: unescaped double quote found")
                      for lang in ("am_et", "ar_sa", "bg_bg")])
         rows = skin.compare(None, head)
         self.assertEqual([(r["message"], len(r["files"])) for r in rows],
-                         [("unescaped double quote found", 3)])
+                         [("Kodi repo: unescaped double quote found", 3)])
 
     def test_no_base_makes_all_new(self):
         """A skin with no base has every finding new, repeats counted once per row."""
