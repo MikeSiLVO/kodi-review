@@ -61,10 +61,12 @@ model runs. A head that already has its check is not checked again. Dispatched b
 [kdk](https://github.com/MikeSiLVO/kdk), or Estuary when it changes none, against the Kodi
 release of its base branch. On a repo-skins submission issue, `@kodi-review skin <link>` checks
 the skin at the link: a GitHub repo at a commit, branch or tag, or a zip. A revision may follow a
-bare repo link. The comment gives the error and warning counts, then a fold per check with one
-table row per problem and the places it occurs: what is new since the base, or everything for a
-new skin. Findings the change fixed get a fold of their own. Anything past GitHub's comment size
-goes to the run's summary page. Anyone can ask, since no model runs, once per head or link. Omega and Piers skins are checked; master
+bare repo link. The comment opens with a line of counts, then the new errors in an open fold
+and the new warnings in a closed one. Each holds a fold per kind of problem with an example and
+the files and lines it occurs at, up to 25 lines per file. Fixed findings, findings the skin
+muted (with its reasons) and those already there before get closed folds of their own; a new
+skin counts everything as new. Past GitHub's comment size, long file lists are cut, then tables,
+warnings and smallest first, and the run's summary page lists every finding. Anyone can ask, since no model runs, once per head or link. Omega and Piers skins are checked; master
 counts as Piers while their xbmc.gui versions match.
 
 ## Files
