@@ -233,6 +233,16 @@ class CompareTests(unittest.TestCase):
                          (2, "language/*/strings.po", "id 31496 twice (first on line #)"))
         self.assertEqual(len(rows[0]["files"]), 3)
 
+    def test_language_rows_fold_without_their_path(self):
+        """A message opening with its own file's path folds across languages like any other."""
+        po = "language/resource.language.{}/strings.po"
+        head = run(*[("Kodi Repo", "warning", po.format(lang), 7,
+                      f"{po.format(lang)}: unescaped double quote found")
+                     for lang in ("am_et", "ar_sa", "bg_bg")])
+        rows = skin.compare(None, head)
+        self.assertEqual([(r["message"], len(r["files"])) for r in rows],
+                         [("unescaped double quote found", 3)])
+
     def test_no_base_makes_all_new(self):
         """A skin with no base has every finding new, repeats counted once per row."""
         head = run(("IDs", "error", "xml/a.xml", 1, "Window id: 0"),

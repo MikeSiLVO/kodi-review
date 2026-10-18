@@ -291,11 +291,17 @@ def mute_reason(item):
     return (mute.get("reason") if isinstance(mute, dict) else "") or "no reason given"
 
 
+def own_file_dropped(item):
+    """Return a finding's message without a leading copy of its own file path."""
+    message, file = item.get("message", ""), item.get("file", "")
+    return message[len(file) + 2:] if file and message.startswith(f"{file}: ") else message
+
+
 def findings(run):
     """Flatten a kdk report into rows of check, severity, file, line, message, mute and reason."""
     return [{"rule": category, "severity": item.get("severity", ""),
              "file": item.get("file", ""), "line": item.get("line") or 0,
-             "message": item.get("message", ""), "muted": bool(item.get("muted")),
+             "message": own_file_dropped(item), "muted": bool(item.get("muted")),
              "reason": mute_reason(item)}
             for category, items in (run.get("categories") or {}).items() for item in items]
 
