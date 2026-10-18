@@ -195,6 +195,13 @@ class UnpackTests(unittest.TestCase):
                 skin.unpack(archive, self.root / "out")
         self.assertFalse((self.root / "evil.xml").exists())
 
+    def test_refusal_quotes_the_entry_name(self):
+        """A refused entry's name sits in a code span, where markup in it stays text."""
+        archive = self.zipped([("../![x](https://evil.org/p.png)", "x", stat.S_IFREG | 0o644)])
+        with self.assertRaisesRegex(skin.SkinError,
+                                    r"unsafe path: `\.\./!\[x\]\(https://evil\.org/p\.png\)`$"):
+            skin.unpack(archive, self.root / "out")
+
     def test_refuses_too_many_or_too_big(self):
         """Archives past the file count or the unpacked size stop before writing anything."""
         archive = self.zipped([(f"f{i}", "x", stat.S_IFREG | 0o644) for i in range(5)])
@@ -235,6 +242,52 @@ class SkinLookupTests(unittest.TestCase):
         """Version 5.17 of xbmc.gui is Omega, 5.18 is Piers, anything else is not covered."""
         self.assertEqual([skin.release_for(v) for v in ("5.17.0", "5.18.2", "5.16.0", "")],
                          ["omega", "piers", None, None])
+
+    def test_addon_id(self):
+        """An id Kodi accepts passes; one that could escape a folder or render is refused."""
+        for good in ("skin.estuary", "skin.arctic.zephyr.martian", "skin.a_b-2"):
+            self.assertEqual(skin.addon_id({"id": good}), good)
+        for bad in ("../x", "/etc", "a/b", ".hidden", "", "x y", "<b>x</b>"):
+            with self.assertRaises(skin.SkinError, msg=bad):
+                skin.addon_id({"id": bad})
+        with self.assertRaisesRegex(skin.SkinError, r"^`\.\./x` is not a valid add-on id$"):
+            skin.addon_id({"id": "../x"})
+
+
+class FooterTests(unittest.TestCase):
+    """The footer's links to what was checked."""
+
+    def test_one_skin_links_its_folder_at_both_commits(self):
+        """A single skin's head and base link to its folder's files at each commit."""
+        with mock.patch.object(skin, "REPO", "xbmc/repo-skins"):
+            text = skin.commits_checked("a" * 40, "b" * 40, ["skin.test"], True)
+        self.assertEqual(text, f"[{'a' * 12}](https://github.com/xbmc/repo-skins/tree/{'a' * 40}"
+                               f"/skin.test) against [{'b' * 12}](https://github.com/xbmc/"
+                               f"repo-skins/tree/{'b' * 40}/skin.test)")
+
+    def test_new_skin_names_no_base(self):
+        """A skin with nothing to compare against names only the head."""
+        with mock.patch.object(skin, "REPO", "xbmc/repo-skins"):
+            text = skin.commits_checked("a" * 40, "b" * 40, ["skin.test"], False)
+        self.assertNotIn("against", text)
+
+    def test_two_skins_link_the_whole_tree(self):
+        """Two skins link each commit's files at the repo root."""
+        with mock.patch.object(skin, "REPO", "xbmc/xbmc"):
+            text = skin.commits_checked("a" * 40, "b" * 40, ["addons/skin.a", "addons/skin.b"],
+                                        True)
+        self.assertIn(f"(https://github.com/xbmc/xbmc/tree/{'a' * 40})", text)
+
+    def test_link_footer_opens_the_skin_files(self):
+        """A GitHub link resolves to its commit, named as owner/repo@sha linked to its files."""
+        answers = {"/repos/o/skin.x": {"default_branch": "main"},
+                   "/repos/o/skin.x/commits/main": {"sha": "c" * 40}}
+        with mock.patch.object(skin, "request", lambda method, path: answers[path]):
+            archive, key, shown = skin.resolve_link("https://github.com/o/skin.x", "")
+        self.assertEqual(archive, f"https://codeload.github.com/o/skin.x/tar.gz/{'c' * 40}")
+        self.assertEqual(key, f"github:o/skin.x@{'c' * 40}")
+        self.assertEqual(shown, f"[o/skin.x@{'c' * 12}](https://github.com/o/skin.x/tree/"
+                                f"{'c' * 40})")
 
 
 class CompareTests(unittest.TestCase):

@@ -43,6 +43,7 @@ REPORT_LIMIT = 900_000
 ASK_START = re.compile(r"@kodi-review", re.I)
 LINK = re.compile(r"https://[^\s<>()\[\]`'\"]+")
 REVISION = re.compile(r"\w[\w./-]{0,99}")
+ADDON_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
 LANGUAGE_CODE = re.compile(r"language/resource\.language\.([^/]+)/strings\.po")
@@ -78,14 +79,14 @@ def check_public(link):
     """Check a link is https on the default port and resolves only to public addresses."""
     parts = urllib.parse.urlsplit(link)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443):
-        raise SkinError(f"only https links can be checked, not {link[:200]}")
+        raise SkinError(f"only https links can be checked, not {code(link[:200])}")
     try:
         addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, 443)}
     except OSError as err:
-        raise SkinError(f"could not look up {parts.hostname}") from err
+        raise SkinError(f"could not look up {code(parts.hostname)}") from err
     if not addresses or not all(ipaddress.ip_address(str(a).split("%")[0]).is_global
                                 for a in addresses):
-        raise SkinError(f"{parts.hostname} is not a public address")
+        raise SkinError(f"{code(parts.hostname)} is not a public address")
 
 
 class PublicRedirects(urllib.request.HTTPRedirectHandler):
@@ -111,16 +112,16 @@ def download(link, target):
                     raise SkinError(f"the download is over {DOWNLOAD_LIMIT // 2**20} MB")
                 out.write(chunk)
     except (urllib.error.URLError, TimeoutError, OSError) as err:
-        raise SkinError(f"could not download {link[:200]}: {err}") from err
+        raise SkinError(f"could not download {code(link[:200])}: {code(str(err)[:200])}") from err
 
 
 def safe_name(name):
     """Return an archive entry's path parts, refusing absolute paths and escapes from the folder."""
     if not name or name.startswith(("/", "\\")) or "\\" in name or ":" in name.split("/")[0]:
-        raise SkinError(f"the archive has an unsafe path: {name[:200]}")
+        raise SkinError(f"the archive has an unsafe path: {code(name[:200])}")
     parts = [p for p in name.split("/") if p not in ("", ".")]
     if ".." in parts:
-        raise SkinError(f"the archive has an unsafe path: {name[:200]}")
+        raise SkinError(f"the archive has an unsafe path: {code(name[:200])}")
     return parts
 
 
@@ -142,7 +143,8 @@ def unpack_zip(archive, target, _dropped=()):
         for info in entries:
             mode = info.external_attr >> 16
             if stat.S_ISLNK(mode) or (mode and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode))):
-                raise SkinError(f"the archive holds a link or special file: {info.filename[:200]}")
+                raise SkinError("the archive holds a link or special file: "
+                                f"{code(info.filename[:200])}")
             count_entry(totals, info.file_size)
         for info in entries:
             path = target.joinpath(*safe_name(info.filename))
@@ -163,7 +165,8 @@ def unpack_tar(archive, target, dropped=()):
                    and not (m.issym() and m.name.startswith(tuple(f"{d}/" for d in dropped)))]
         for member in members:
             if not (member.isfile() or member.isdir()):
-                raise SkinError(f"the archive holds a link or special file: {member.name[:200]}")
+                raise SkinError("the archive holds a link or special file: "
+                                f"{code(member.name[:200])}")
             count_entry(totals, member.size)
         tf.extractall(target, members=members, filter="data")
 
@@ -176,7 +179,7 @@ def unpack(archive, target, dropped=()):
     try:
         (unpack_zip if zipped else unpack_tar)(archive, target, dropped)
     except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError, ValueError) as err:
-        raise SkinError(f"could not unpack the archive: {err}") from err
+        raise SkinError(f"could not unpack the archive: {code(str(err)[:200])}") from err
 
 
 def addon_info(path):
@@ -278,7 +281,8 @@ def run_kdk(tree, out, *args):
     except (json.JSONDecodeError, AttributeError):
         reason = None
     print(done.stderr[-4000:], file=sys.stderr)
-    raise SkinError(f"kdk could not finish: {reason or f'exit {done.returncode}'}")
+    shown = code(str(reason)[:200]) if reason else f"exit {done.returncode}"
+    raise SkinError(f"kdk could not finish: {shown}")
 
 
 def validate(tree, skin, release, kodi, out):
@@ -386,13 +390,26 @@ def kodi_release(sha):
     return release
 
 
+def tree_link(name, repo, sha, folder=""):
+    """Link a name to a commit's files in a GitHub repo, at one folder when given."""
+    path = f"/{urllib.parse.quote(folder)}" if folder else ""
+    return f"[{name}](https://github.com/{repo}/tree/{sha}{path})"
+
+
+def commits_checked(head, base, folders, based):
+    """Name the head and any base commit, linked to their files at the one skin folder checked."""
+    folder = folders[0] if len(folders) == 1 else ""
+    text = tree_link(head[:12], REPO, head, folder)
+    return text + (f" against {tree_link(base[:12], REPO, base, folder)}" if based else "")
+
+
 def check_kodi_pr(scratch):
     """Check the skins a Kodi pull request changes, or Estuary when it changes none."""
     head, base, branch, files = pull_request()
     release = kodi_release(base)
     skins = sorted({"/".join(f.split("/")[:2]) for f in files
                     if f.startswith("addons/skin.") and f.count("/") >= 2}) or [DEFAULT_SKIN]
-    results = []
+    results, folders = [], []
     for skin in skins[:SKIN_LIMIT]:
         trees = {}
         for side, sha in (("head", head), ("base", base)):
@@ -402,7 +419,10 @@ def check_kodi_pr(scratch):
                 trees[side] = (tree, skin)
         if "head" in trees:
             results.append(skin_result(trees["head"], trees.get("base"), release, True, branch))
-    return {"key": f"sha={head}", "checked": f"{head[:12]} against {base[:12]}", "skins": results}
+            folders.append(skin)
+    based = any(not r["new_skin"] for r in results)
+    return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
+            "skins": results}
 
 
 def check_skins_pr(scratch):
@@ -414,16 +434,19 @@ def check_skins_pr(scratch):
     skins = sorted({f.split("/")[0] for f in files if f.startswith("skin.") and "/" in f})
     if not skins:
         raise SkinError("the pull request changes no skin folder")
-    results = []
+    results, folders = [], []
     for skin in skins[:SKIN_LIMIT]:
         head_tree, base_tree = scratch / "head" / skin, scratch / "base" / skin
         if not git_tree(REPO, head, [skin], head_tree):
             continue
         if not addon_info(head_tree / skin / "addon.xml"):
-            raise SkinError(f"{skin}/addon.xml does not declare a skin")
+            raise SkinError(f"{code(skin + '/addon.xml')} does not declare a skin")
         base_side = (base_tree, skin) if git_tree(REPO, base, [skin], base_tree) else None
         results.append(skin_result((head_tree, skin), base_side, branch, False, branch))
-    return {"key": f"sha={head}", "checked": f"{head[:12]} against {base[:12]}", "skins": results}
+        folders.append(skin)
+    based = any(not r["new_skin"] for r in results)
+    return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
+            "skins": results}
 
 
 def issue_link():
@@ -447,9 +470,18 @@ def resolve_link(link, revision):
         ref = ref or request("GET", f"/repos/{owner}/{name}")["default_branch"]
         sha = request("GET", f"/repos/{owner}/{name}/commits/{urllib.parse.quote(ref)}")["sha"]
     except urllib.error.HTTPError as err:
-        raise SkinError(f"could not find {ref or 'the default branch'} in {owner}/{name}") from err
+        raise SkinError(f"could not find {code(ref) or 'the default branch'} in "
+                        f"{code(f'{owner}/{name}')}") from err
     return (f"https://codeload.github.com/{owner}/{name}/tar.gz/{sha}",
-            f"github:{owner}/{name}@{sha}", f"{owner}/{name}@{sha[:12]}")
+            f"github:{owner}/{name}@{sha}", tree_link(f"{owner}/{name}@{sha[:12]}",
+                                                      f"{owner}/{name}", sha))
+
+
+def addon_id(info):
+    """Return a skin's add-on id, raising unless Kodi accepts it and it is safe as a folder name."""
+    if not ADDON_ID.fullmatch(info["id"]):
+        raise SkinError(f"{code(info['id'][:100]) or 'an empty id'} is not a valid add-on id")
+    return info["id"]
 
 
 def checked_before(key):
@@ -470,18 +502,20 @@ def check_issue(scratch):
         raise SkinError("the link holds no skin" if not skins
                         else "the link holds more than one skin")
     folder, info = skins[0]
+    skin = addon_id(info)
     release = release_for(info["gui"])
     if not release:
-        raise SkinError(f"{info['id']} asks for xbmc.gui {info['gui'] or 'no version'}; the skin "
-                        "check covers " + " and ".join(RELEASE_NAMES))
+        raise SkinError(f"{code(skin)} asks for xbmc.gui {code(info['gui'][:40]) or 'no version'}; "
+                        "the skin check covers " + " and ".join(RELEASE_NAMES))
     named = scratch / "head" / "named"
     named.mkdir()
-    folder.rename(named / info["id"])
+    folder.rename(named / skin)
     branch = request("GET", f"/repos/{REPO}/branches/{release}")["commit"]["sha"]
-    base_tree = scratch / "base" / info["id"]
-    base = (base_tree, info["id"]) if git_tree(REPO, branch, [info["id"]], base_tree) else None
-    result = skin_result((named, info["id"]), base, release, False, release)
-    return {"key": f"source={key}", "checked": f"{shown} against {release} {branch[:12]}",
+    base_tree = scratch / "base" / skin
+    base = (base_tree, skin) if git_tree(REPO, branch, [skin], base_tree) else None
+    result = skin_result((named, skin), base, release, False, release)
+    shipped = tree_link(f"{release} {branch[:12]}", REPO, branch, skin)
+    return {"key": f"source={key}", "checked": shown + (f" against {shipped}" if base else ""),
             "skins": [result]}
 
 
