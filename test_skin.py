@@ -272,39 +272,43 @@ class RenderTests(unittest.TestCase):
         return {"key": "sha=" + "a" * 40, "checked": "aaaa against bbbb", "skins": [result],
                 "run": "https://github.com/MikeSiLVO/kodi-review/actions/runs/1"}
 
-    def test_update_folds_new_problems_under_its_line(self):
-        """An update gets a status line, folded tables of what is new, and what was there."""
+    def test_update_gets_counts_and_a_fold_per_check(self):
+        """An update gets a heading, icon counts, a fold per check and its fixed rows apart."""
         base = run(("Fonts", "warning", "xml/Font.xml", 3, "Unused font: a"), errors=4, warnings=9)
         head = run(("Variables", "error", "xml/Colors.xml", 140, "Duplicate variable 'c'"),
                    ("Fonts", "warning", "xml/Font.xml", 9, "Unused font: b"),
                    ("Fonts", "warning", "xml/Font.xml", 10, "Unused font: d"),
                    errors=5, warnings=10)
         text = skin.skin_text(self.facts(base, head))
-        self.assertTrue(text.startswith("**Skin:** `skin.test 1.2.0` against Kodi 22 (Piers): "
-                                        "1 new error, 2 new warnings, 1 fixed.\n\n"))
-        self.assertIn("<details><summary>1 new error</summary>\n\n| Check | Problem | Where |\n"
-                      "| --- | --- | --- |\n| Variables | Duplicate variable `c` | "
-                      "`xml/Colors.xml:140` |\n\n</details>", text)
-        self.assertIn("<summary>2 new warnings</summary>", text)
-        self.assertIn("<summary>1 fixed</summary>", text)
-        self.assertIn("Already there: 4 errors, 9 warnings.", text)
+        self.assertTrue(text.startswith("### 🎨 Skin check · `skin.test 1.2.0`\n\n"
+                                        "Checked against Kodi 22 (Piers)\n\n"
+                                        "🔴 **1** new error · 🟡 **2** new warnings · "
+                                        "✅ **1** fixed\n\n"))
+        self.assertIn("<details><summary>🔣 <b>Variables</b> · 🔴 1</summary>\n\n"
+                      "| | Problem | Where |\n| :-: | --- | --- |\n"
+                      "| 🔴 | Duplicate variable `c` | `xml/Colors.xml:140` |\n\n</details>", text)
+        self.assertIn("<summary>🔤 <b>Fonts</b> · 🟡 2</summary>", text)
+        self.assertLess(text.index("Variables"), text.index("Fonts"))
+        self.assertIn("<summary>✅ <b>Fixed</b> · 1</summary>", text)
+        self.assertIn("| ✅ | 🔤 Fonts: Unused font: `a` | `xml/Font.xml:3` |", text)
+        self.assertIn("<sub>Already there before: 4 errors, 9 warnings.</sub>", text)
         self.assertTrue(text.endswith("<sub>kdk 2.1.0 · checked aaaa against bbbb.</sub>"))
         self.assertNotIn("actions/runs", text)
 
     def test_clean_update(self):
-        """An update adding nothing gets one line saying it has no new problems."""
+        """An update adding nothing gets the no new problems line and no folds."""
         text = skin.skin_text(self.facts(run(errors=1), run(errors=1)))
-        self.assertIn("against Kodi 22 (Piers): no new problems.", text)
+        self.assertIn("✅ No new problems", text)
         self.assertNotIn("<details>", text)
 
-    def test_new_skin_folds_errors_and_warnings(self):
-        """A new skin gets its totals and a folded table for its errors and its warnings."""
+    def test_new_skin_counts_everything(self):
+        """A new skin gets its totals and a fold per check holding errors and warnings."""
         head = run(("IDs", "error", "xml/a.xml", 1, "Window id: 0"),
                    ("Fonts", "warning", "xml/Font.xml", 2, "Unused font: a"), errors=1, warnings=1)
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("is new here. Against Kodi 22 (Piers): 1 error, 1 warning.", text)
-        self.assertIn("<summary>1 error</summary>", text)
-        self.assertIn("| Fonts | Unused font: `a` | `xml/Font.xml:2` |", text)
+        self.assertIn("🆕 New skin, checked against Kodi 22 (Piers)\n\n"
+                      "🔴 **1** error · 🟡 **1** warning", text)
+        self.assertIn("| 🟡 | Unused font: `a` | `xml/Font.xml:2` |", text)
 
     def test_one_problem_in_many_places_is_one_row(self):
         """The same message across files is one row listing a few places and how many more."""
@@ -312,8 +316,8 @@ class RenderTests(unittest.TestCase):
                      for n in range(5)], ("XML Validation", "warning", "xml/0.xml", 9,
                                           "Redundant <aligny>"))
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("| XML Validation | Redundant `<aligny>` | `xml/0.xml:9` (2×), "
-                      "`xml/1.xml:4`, `xml/2.xml:4` and 2 more |", text)
+        self.assertIn("| 🟡 | Redundant `<aligny>` | `xml/0.xml:9` ×2<br>`xml/1.xml:4`<br>"
+                      "`xml/2.xml:4`<br>and 2 more |", text)
 
     def test_language_rows_read_cleanly(self):
         """A folded language row drops its check name and line, and names its file count."""
@@ -322,14 +326,14 @@ class RenderTests(unittest.TestCase):
                       f"Kodi repo: string id 31496 is defined twice (first on line {n})")
                      for n, lang in enumerate(("en_gb", "de_de"))])
         text = skin.skin_text(self.facts(None, head))
-        self.assertIn("| Kodi Repo | string id 31496 is defined twice | 2 language files |", text)
+        self.assertIn("| 🟡 | string id 31496 is defined twice | 2 language files |", text)
 
     def test_skin_text_cannot_ping_link_or_break_the_table(self):
         """Text from a skin, escaped or in code, cannot mention, link or split a table cell."""
         head = run(("Variables", "error", "xml/a|b.xml", 1,
                     "Unused variable: @xbmc/team see https://evil.org #123 [x](y) a|b <b>"))
         text = review.unlinked(skin.skin_text(self.facts(run(), head)))
-        row = next(line for line in text.splitlines() if line.startswith("| Variables"))
+        row = next(line for line in text.splitlines() if line.startswith("| 🔴"))
         self.assertNotIn("@xbmc", row)
         self.assertNotIn("https://evil", row)
         self.assertNotIn("#123", row)
@@ -338,27 +342,29 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(row.count(" | "), 2)
 
     def test_muted_findings_show_their_reason(self):
-        """A finding new and muted on head is folded on its own with the skin's reason."""
+        """A finding new and muted on head shows the mute icon and the skin's reason."""
         head = run(("Labels", "warning", "xml/a.xml", 3, "Not translated",
                     {"line": 2, "reason": "theme name"}))
         text = skin.skin_text(self.facts(run(), head))
-        self.assertIn("<summary>1 muted by kdk-ignore</summary>", text)
-        self.assertIn("| Labels | Not translated (muted: theme name) | `xml/a.xml:3` |", text)
+        self.assertIn("| 🔕 | Not translated<br><sub>muted: theme name</sub> | `xml/a.xml:3` |",
+                      text)
+        self.assertIn("✅ No new problems", text)
 
     def test_overflow_points_at_the_run(self):
         """Rows past the comment's room are counted and pointed at the run's summary."""
         head = run(*[("IDs", "error", f"xml/{n}.xml", 1, f"Control ID {n} not defined")
                      for n in range(40)])
-        with mock.patch.object(skin, "COMMENT_LIMIT", 1500):
+        with mock.patch.object(skin, "COMMENT_LIMIT", 2000):
             text = skin.skin_text(self.facts(None, head))
-        self.assertRegex(text, r"\d+ more not shown; the \[run's summary\]"
-                               r"\(https://github.com/MikeSiLVO/kodi-review/actions/runs/1\)")
-        self.assertLess(len(text), 1800)
+        self.assertRegex(text, r"\d+ more not shown\.")
+        self.assertIn("the [run's summary](https://github.com/MikeSiLVO/kodi-review/actions/runs/1)",
+                      text)
+        self.assertLess(len(text), 2300)
 
     def test_not_checked(self):
         """A failed check states its reason."""
         self.assertEqual(skin.skin_text({"error": "the pull request targets nexus"}),
-                         "**Skin:** not checked, the pull request targets nexus.")
+                         "### 🎨 Skin check\n\n⚠️ Not checked: the pull request targets nexus.")
 
     def test_report_marks_new_rows(self):
         """The report lists every head finding by check, with new and muted ones marked."""
