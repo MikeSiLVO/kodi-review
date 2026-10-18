@@ -82,7 +82,7 @@ counts as Piers while their xbmc.gui versions match.
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
-| `vendor/` | bubblewrap and socat for Ubuntu 24.04, checked against `SHA256SUMS` before install, and the hash-pinned clang-format wheels |
+| `vendor/` | bubblewrap and socat for Ubuntu 24.04, the kdk and lxml wheels, all checked against `SHA256SUMS` before install, and the hash-pinned clang-format wheels |
 
 ## Security
 
