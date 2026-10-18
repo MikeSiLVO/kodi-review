@@ -33,7 +33,8 @@ UNPACKED_LIMIT = 600 * 2**20
 FILE_LIMIT = 30_000
 ADDON_XML_LIMIT = 2**20
 KDK_TIMEOUT = 900
-LIST_LIMIT = 30
+COMMENT_LIMIT = 60_000
+PLACE_LIMIT = 3
 REPORT_LIMIT = 900_000
 ASK_START = re.compile(r"@kodi-review", re.I)
 LINK = re.compile(r"https://[^\s<>()\[\]`'\"]+")
@@ -42,6 +43,10 @@ GITHUB_PAGE = re.compile(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?"
                          r"(?:/(?:tree|commit|releases/tag)/([^?#]+?))?/?(?:[?#].*)?")
 LANGUAGE_FILE = re.compile(r"language/resource\.language\.[^/]+/strings\.po")
 LINE_NUMBER = re.compile(r"\bline \d+")
+NAME = re.compile(r"'([^'\n]{1,120})'|(</?[A-Za-z][^<>\n]{0,80}>)|(?<=: )([^\s'`<>]+)$")
+FIRST_LINE = re.compile(r"\s*\([^()]*\bline #[^()]*\)")
+MARKUP = re.compile(r"([\\`*_\[\]#|~!])")
+ISSUE_REF = re.compile(r"#(?=\d)")
 USER_AGENT = "kodi-review"
 
 
@@ -278,11 +283,20 @@ def run_kdk(tree, skin, release, kodi, out):
     raise SkinError(f"kdk could not finish: {reason or f'exit {done.returncode}'}")
 
 
+def mute_reason(item):
+    """Return the reason a kdk-ignore comment gives for muting a finding, or nothing if unmuted."""
+    mute = item.get("muted")
+    if not mute:
+        return ""
+    return (mute.get("reason") if isinstance(mute, dict) else "") or "no reason given"
+
+
 def findings(run):
-    """Flatten a kdk report into rows of check, severity, file, line, message and mute."""
+    """Flatten a kdk report into rows of check, severity, file, line, message, mute and reason."""
     return [{"rule": category, "severity": item.get("severity", ""),
              "file": item.get("file", ""), "line": item.get("line") or 0,
-             "message": item.get("message", ""), "muted": bool(item.get("muted"))}
+             "message": item.get("message", ""), "muted": bool(item.get("muted")),
+             "reason": mute_reason(item)}
             for category, items in (run.get("categories") or {}).items() for item in items]
 
 
@@ -501,11 +515,26 @@ def code(text):
     return f"`{text}`" if text else ""
 
 
-def place(row):
-    """Format a finding's file and line, or its file count when folded across languages."""
-    where = row["file"] + (f":{row['line']}" if row.get("line") else "")
-    files = row.get("files")
-    return code(where) + (f" in {len(files)} files" if files else "")
+def cell(text):
+    """Format text from a skin as a code span that also fits a table cell."""
+    return code(text).replace("|", "\\|")
+
+
+def plain(text):
+    """Escape text from a skin so it shows as typed, with no markup, links, mentions or refs."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = MARKUP.sub(r"\\\1", ISSUE_REF.sub("#\u200b", text))
+    return text.replace("@", "@\u200b").replace("://", ":\u200b//").replace("www.", "www\u200b.")
+
+
+def nice(message):
+    """Format a kdk message: quoted names, tags and a final value as code, the rest escaped."""
+    text = " ".join(str(message).split())
+    parts, pos = [], 0
+    for match in NAME.finditer(text):
+        parts += [plain(text[pos:match.start()]), cell(match[1] or match[2] or match[3])]
+        pos = match.end()
+    return "".join(parts) + plain(text[pos:])
 
 
 def plural(count, word):
@@ -513,19 +542,56 @@ def plural(count, word):
     return f"{count} {word}{'s' if count != 1 else ''}"
 
 
-def row_line(row):
-    """Format one finding as a list item: severity, place, message, and any count past one."""
-    times = f" ({row['count']}×)" if row["count"] > 1 and not row.get("files") else ""
-    return f"- {row['severity'].capitalize()} · {place(row)} · {code(row['message'])}{times}"
+def place(row):
+    """Format where one row sits: file, line and repeats, or how many language files it spans."""
+    if row.get("files"):
+        return f"{len(row['files'])} language files"
+    times = f" ({row['count']}×)" if row["count"] > 1 else ""
+    return cell(row["file"] + (f":{row['line']}" if row["line"] else "")) + times
 
 
-def by_check(rows):
-    """Format the unmuted finding counts per check, biggest first."""
-    counts = Counter()
+def grouped(rows):
+    """Group rows saying one thing as (check, message, reason, rows), by check, widest first."""
+    groups = {}
     for row in rows:
-        if not row["muted"]:
-            counts[row["rule"]] += row["count"]
-    return ", ".join(f"{rule} {n}" for rule, n in counts.most_common())
+        groups.setdefault((row["rule"], row["message"], row.get("reason", "")), []).append(row)
+    order = sorted(groups.items(), key=lambda g: (g[0][0], -len(g[1]), g[0][1]))
+    return [(*key, items) for key, items in order]
+
+
+def tidy(rule, message):
+    """Drop what a table row already shows from a message: its check's name and a folded line."""
+    if message.lower().startswith(f"{rule.lower()}: "):
+        message = message[len(rule) + 2:]
+    return FIRST_LINE.sub("", message)
+
+
+def table(groups, room, run):
+    """Format grouped findings as a table within a size cap, counting the problems left out."""
+    lines = ["| Check | Problem | Where |", "| --- | --- | --- |"]
+    used = sum(len(line) + 1 for line in lines)
+    for shown, (rule, message, reason, rows) in enumerate(groups):
+        places = [place(r) for r in rows]
+        where = ", ".join(places[:PLACE_LIMIT])
+        if len(places) > PLACE_LIMIT:
+            where += f" and {len(places) - PLACE_LIMIT} more"
+        why = f" (muted: {plain(reason)})" if reason else ""
+        line = f"| {plain(rule)} | {nice(tidy(rule, message))}{why} | {where} |"
+        if used + len(line) + 1 > room:
+            left = len(groups) - shown
+            return "\n".join(lines) + (f"\n\n{left} more not shown; the [run's summary]({run}) "
+                                       "lists every finding.")
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
+
+
+def section(label, rows, room, run):
+    """Format one folded section of findings, or nothing when there are none."""
+    if not rows:
+        return ""
+    body = table(grouped(rows), room - len(label) - 60, run)
+    return f"<details><summary>{label}</summary>\n\n{body}\n\n</details>"
 
 
 def new_counts(rows):
@@ -537,36 +603,36 @@ def new_counts(rows):
     return ", ".join(kinds) or "no new problems"
 
 
-def skin_lines(skin, run):
-    """Format one skin's part of the comment: its line, new findings, and what was there."""
+def skin_lines(skin, run, room):
+    """Format one skin's comment part: status line, folded findings, what was there and notes."""
     name = code(f"{skin['id']} {skin['version']}")
     against = RELEASE_NAMES.get(skin["release"], skin["release"])
-    head = skin["head"]
     new = [r for r in skin["rows"] if r["status"] == "new" and not r["muted"]]
-    muted = sum(r["count"] for r in skin["rows"] if r["status"] == "new" and r["muted"])
-    fixed = sum(r["count"] for r in skin["rows"] if r["status"] == "fixed" and not r["muted"])
+    errors = [r for r in new if r["severity"] == "error"]
+    warnings = [r for r in new if r["severity"] != "error"]
+    muted = [r for r in skin["rows"] if r["status"] == "new" and r["muted"]]
+    fixed = [r for r in skin["rows"] if r["status"] == "fixed" and not r["muted"]]
+    fixed_count = sum(r["count"] for r in fixed)
     if skin["new_skin"]:
+        head = skin["head"]
         parts = [f"**Skin:** {name} is new here. Against {against}: "
                  f"{plural(head['errors'], 'error')}, {plural(head['warnings'], 'warning')}."]
-        if counts := by_check(new):
-            parts.append(f"By check: {counts}.")
-        listed = [r for r in new if r["severity"] == "error"]
+        labels = ("error", "warning")
     else:
         parts = [f"**Skin:** {name} against {against}: {new_counts(new)}"
-                 + (f", {fixed} fixed." if fixed else ".")]
-        listed = new
-    if listed:
-        shown = listed[:LIST_LIMIT]
-        more = len(listed) - len(shown)
-        parts.append("\n".join(row_line(r) for r in shown)
-                     + (f"\n- {more} more in the [full report]({run})." if more else ""))
-    if muted:
-        parts.append(f"{plural(muted, 'new finding')} muted by `kdk-ignore` comments; the full "
-                     "report lists them.")
+                 + (f", {fixed_count} fixed." if fixed else ".")]
+        labels = ("new error", "new warning")
+    sections = ((plural(sum(r["count"] for r in errors), labels[0]), errors),
+                (plural(sum(r["count"] for r in warnings), labels[1]), warnings),
+                (f"{fixed_count} fixed", fixed),
+                (f"{sum(r['count'] for r in muted)} muted by kdk-ignore", muted))
+    for label, rows in sections:
+        if part := section(label, rows, room - sum(len(p) + 2 for p in parts), run):
+            parts.append(part)
     if skin["base"]:
         parts.append(f"Already there: {plural(skin['base']['errors'], 'error')}, "
                      f"{plural(skin['base']['warnings'], 'warning')}.")
-    parts += [f"Note: {code(notice)}" for notice in skin["notices"]]
+    parts += [f"Note: {nice(notice)}" for notice in skin["notices"]]
     return parts
 
 
@@ -576,17 +642,12 @@ def skin_text(facts):
         return f"**Skin:** not checked, {facts['error']}."
     if not facts.get("skins"):
         return "**Skin:** not checked, no skin was found to check."
-    run = facts.get("run", "")
-    parts = [part for skin in facts["skins"] for part in skin_lines(skin, run)]
+    room = COMMENT_LIMIT // len(facts["skins"])
+    parts = [part for skin in facts["skins"]
+             for part in skin_lines(skin, facts.get("run", ""), room)]
     versions = sorted({s["kdk"] for s in facts["skins"] if s["kdk"]})
-    parts.append(f"[Full report]({run})")
     parts.append(f"<sub>kdk {', '.join(versions) or 'unknown'} · checked {facts['checked']}.</sub>")
     return "\n\n".join(parts)
-
-
-def cell(text):
-    """Format text from a skin for a report table cell."""
-    return code(text).replace("|", "\\|")
 
 
 def report_rows(skin):
