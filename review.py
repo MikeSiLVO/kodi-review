@@ -1462,8 +1462,38 @@ def asks_again(body):
     return bool(mention and AGAIN.search(said[mention.end():].partition("\n")[0]))
 
 
+def tell(key, text):
+    """Tell the asker why an ask runs nothing, or react 😕 when the thread already has that reply."""
+    kind, number = asking_comment()
+    pr = os.environ["FORK_PR"]
+    marker = f"<!-- kodi-review refused {key} -->"
+    told = list(paged(f"/repos/{REPO}/issues/{pr}/comments"))
+    if kind == "review":
+        told += paged(f"/repos/{REPO}/pulls/{pr}/comments")
+    path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"
+    if any(c["user"]["type"] == "Bot" and (c["body"] or "").startswith(marker) for c in told):
+        request("POST", f"{path}/reactions", {"content": "confused"})
+    elif kind == "review":
+        request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{number}/replies",
+                {"body": f"{marker}\n{text}"})
+    else:
+        asked = (fetch_comment(path).get("body") or "").strip()
+        quote = unlinked(asked.split("\n", 1)[0][:300])
+        request("POST", f"/repos/{REPO}/issues/{pr}/comments",
+                {"body": f"{marker}\n> {quote}\n\n{text}" if quote else f"{marker}\n{text}"})
+
+
+def refuse(key, text):
+    """Tell the asker why the ask runs nothing, then exit 1 with that reason."""
+    try:
+        tell(key, text)
+    except urllib.error.URLError as err:
+        print(f"Could not tell the asker: {err}")
+    sys.exit(text)
+
+
 def cmd_trigger():
-    """Exit 1 unless a push or an ask this repo and asker may make; react to non-help mentions."""
+    """Exit 1 unless a push or allowed ask; tell a refused mention why, react to non-help ones."""
     if os.environ.get("SOURCE") == "push":
         check_recheck()
         return
@@ -1488,10 +1518,18 @@ def cmd_trigger():
             asked = "skin"
         elif REVIEW_ASK.match(body, mention.end()):
             asked = "review"
-    if asked != os.environ.get("MODE", "review"):
-        sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
+    mode = os.environ.get("MODE", "review")
+    if asked != mode and mode != "refuse":
+        sys.exit(f"The comment asks for {asked}, not {mode}.")
+    if mode == "refuse":
+        thread = request("GET", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}")
+        if thread["state"] != "open":
+            refuse("closed", "This is closed, so I won't run anything here.")
+        if "pull_request" not in thread and REPO not in SKIN_REPOS:
+            refuse("issue", "I only run on pull requests here.")
     if REPO in SKIN_REPOS and asked not in ("skin", "help"):
-        sys.exit(f"Only the skin check and help run on {REPO}.")
+        refuse("skin-repo",
+               "Only `@kodi-review skin` and `@kodi-review help` run on this repository.")
     again = asked == "skin" and asks_again(comment.get("body") or "")
     if asked == "skin" and not again:
         if os.environ.get("SOURCE") != "issue":
@@ -1499,20 +1537,30 @@ def cmd_trigger():
             build = skin_build()
             if any(m[2] == head and m[3].strip() == build
                    for c in skin_comments() if (m := SKIN_MARKER.match(c["body"]))):
-                sys.exit(f"The skin check of {head[:12]} is already posted.")
+                refuse(f"skin sha={head} {build}",
+                       f"Already checked at `{head[:12]}`, and my checks haven't changed since.")
     elif asked == "format":
         head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
         posted = {m[1] for c in format_comments() if (m := FORMAT_MARKER.match(c["body"]))}
         if head in posted:
-            sys.exit(f"The formatting check of {head[:12]} is already posted.")
+            refuse(f"format sha={head}",
+                   f"The formatting check of `{head[:12]}` is already posted.")
     elif asked != "help":
         login = (comment.get("user") or {}).get("login", "")
         try:
             access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
         except urllib.error.HTTPError:
             access = "none"
+        if access not in CAN_ASK and reply:
+            sys.exit(f"{login} has {access} access; a reply needs write access to be answered.")
         if access not in CAN_ASK:
-            sys.exit(f"{login} has {access} access; asking the bot needs write access.")
+            print(f"{login} has {access} access.")
+            needs = ("`skin again` needs" if again else "Reviews need" if asked == "review"
+                     else "Questions need")
+            refuse(f"access {'again' if again else asked}",
+                   f"{needs} write access. `@kodi-review help` lists what anyone can ask.")
+    if mode == "refuse":
+        sys.exit("Refused by the relay, but this run finds nothing to refuse.")
     if reply or asked == "help":
         return
     try:

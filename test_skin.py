@@ -537,7 +537,7 @@ class PostTests(unittest.TestCase):
             self.assertFalse(skin.checked_before("github:o/r@1"))
 
     def test_post_and_skip(self):
-        """A result posts under its marker and hides earlier checks; a repeat posts nothing."""
+        """A result posts under its marker and hides earlier checks; a repeat says why instead."""
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(skin, "RUN_DIR", Path(tmp)), \
                 mock.patch.dict(os.environ, {"FORK_PR": "7"}), \
@@ -552,9 +552,14 @@ class PostTests(unittest.TestCase):
             self.assertEqual(review.SKIN_MARKER.findall(body), [("sha", "abc", " kdk=1 style=a")])
             hide.assert_called_once()
             req.reset_mock()
-            (Path(tmp) / "skin.json").write_text(json.dumps({"key": "source=k", "skip": "done"}))
-            skin.cmd_post()
+            (Path(tmp) / "skin.json").write_text(json.dumps({"key": "source=k", "skip": "done",
+                                                             "checked": "`o/r@1`"}))
+            with mock.patch.object(skin, "tell") as tell:
+                skin.cmd_post()
             req.assert_not_called()
+            tell.assert_called_once_with(
+                "skin source=k kdk=1 style=a",
+                "Already checked `o/r@1`, and my checks haven't changed since.")
 
 
 class SandboxTests(unittest.TestCase):

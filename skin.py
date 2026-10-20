@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from review import (AGAIN, CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, asks_again,
-                    hide_summaries, paged, request, skin_build, skin_comments, unlinked)
+                    hide_summaries, paged, request, skin_build, skin_comments, tell, unlinked)
 
 KODI_REPOS = ("xbmc/xbmc", "MikeSiLVO/xbmc")
 GUI_RELEASES = {"5.17": "omega", "5.18": "piers"}
@@ -498,7 +498,7 @@ def check_issue(scratch):
     (link, revision), again = issue_link()
     archive, key, shown = resolve_link(link, revision)
     if checked_before(key) and not again:
-        return {"key": f"source={key}", "skip": "already checked"}
+        return {"key": f"source={key}", "skip": "already checked", "checked": shown}
     download(archive, scratch / "download")
     tree = scratch / "head" / "link"
     unpack(scratch / "download", tree)
@@ -907,10 +907,13 @@ def cmd_render():
 
 
 def cmd_post():
-    """Post the skin check, hiding the bot's earlier ones; exit 1 on a credential."""
+    """Post the skin check and hide earlier ones, or say why not; exit 1 on a credential."""
     facts = load_facts()
     if "skip" in facts:
         print(f"Not posting: {facts['skip']}")
+        tell(f"skin {facts['key']} {skin_build()}",
+             f"Already checked {facts.get('checked', 'that link')}, and my checks haven't changed "
+             "since.")
         return
     earlier = skin_comments()
     text = unlinked(skin_text(facts))

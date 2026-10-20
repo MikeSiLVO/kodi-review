@@ -32,7 +32,7 @@ on:
         required: false
         type: string
       mode:
-        description: "Set by the relay: review (one queue), answer or help (a queue per comment), format or skin (own queues, no model)"
+        description: "Set by the relay: review (one queue), answer, help or refuse (a queue per comment), format or skin (own queues, no model)"
         required: false
         type: string
       source:
@@ -43,7 +43,8 @@ on:
 concurrency:
   group: >-
     kodi-review-${{ inputs.repo }}-${{ inputs.pr }}-${{ (inputs.mode == 'answer'
-    || inputs.mode == 'help') && inputs.comment || inputs.mode == 'format' && 'format'
+    || inputs.mode == 'help' || inputs.mode == 'refuse') && inputs.comment
+    || inputs.mode == 'format' && 'format'
     || inputs.mode == 'skin' && 'skin' || 'review' }}
   cancel-in-progress: false
 
@@ -115,7 +116,9 @@ jobs:
         run: python3 bot/review.py help
 
   review:
-    if: github.repository_owner == 'MikeSiLVO' && inputs.mode != 'help' && inputs.mode != 'skin'
+    if: >-
+      github.repository_owner == 'MikeSiLVO' && inputs.mode != 'help' && inputs.mode != 'skin'
+      && inputs.mode != 'refuse'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:

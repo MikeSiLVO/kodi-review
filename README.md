@@ -49,6 +49,14 @@ and a reply that only agrees or says a fix is coming gets a 👍.
 `HELP_SKINS.md` on repo-skins, in the same thread or the main conversation. The other commands
 each link to their section here. Anyone can ask.
 
+## When nothing runs
+
+An ask that won't run gets a reply saying why: the pull request or issue is closed, it was asked
+on an issue rather than a pull request, the command doesn't run in that repository, it needs write
+access, or that commit is already checked.
+Each reason is given once per thread; asking again gets a 😕 reaction instead. A reply under a
+finding from someone without write access gets no answer.
+
 ## Formatting only
 
 `@kodi-review format`, `clang` or `clang-format`, alone after the mention, runs only the

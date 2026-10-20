@@ -44,14 +44,14 @@ test("skin asks a check from anyone, skin again only members; skin repos take on
   const ask = (body, changes = {}) => issueComment({ ...changes, comment: {
     ...issueComment().comment, body, author_association: "NONE" } });
   assert.equal(trigger("issue_comment", ask("@kodi-review skin"), repos, skins).mode, "skin");
-  assert.equal(trigger("issue_comment", ask("@kodi-review skins?"), repos, skins), null);
+  assert.equal(trigger("issue_comment", ask("@kodi-review skins?"), repos, skins).mode, "refuse");
   const repoSkins = { repository: { full_name: "xbmc/repo-skins" } };
   const issue = { ...repoSkins, issue: { number: 497, state: "open" } };
   assert.deepEqual(trigger("issue_comment", ask("@kodi-review skin https://x.org/s.zip", issue),
     repos, skins), { pr: "497", repo: "xbmc/repo-skins", comment: "issue/99", mode: "skin",
     source: "issue" });
   for (const body of ["@kodi-review skin again", "@kodi-review skin https://x.org/s.zip again"]) {
-    assert.equal(trigger("issue_comment", ask(body, issue), repos, skins), null, body);
+    assert.equal(trigger("issue_comment", ask(body, issue), repos, skins).mode, "refuse", body);
     const member = issueComment({ ...issue, comment: { ...issueComment().comment, body } });
     assert.equal(trigger("issue_comment", member, repos, skins).mode, "skin", body);
   }
@@ -61,7 +61,7 @@ test("skin asks a check from anyone, skin again only members; skin repos take on
     ["@kodi-review skin", { issue: { number: 3, state: "open" } }],
     ["@kodi-review skin https://x.org/s.zip", { ...issue, issue: { number: 497,
       state: "closed" } }]]) {
-    assert.equal(trigger("issue_comment", ask(body, changes), repos, skins), null, body);
+    assert.equal(trigger("issue_comment", ask(body, changes), repos, skins).mode, "refuse", body);
   }
 });
 
@@ -86,7 +86,7 @@ test("format, clang or clang-format alone asks for the formatting check, from an
   const stranger = (body) => issueComment({ comment: { ...base.comment, body,
     author_association: "NONE" } });
   assert.equal(trigger("issue_comment", stranger("@kodi-review format"), REPOS).mode, "format");
-  assert.equal(trigger("issue_comment", stranger("@kodi-review"), REPOS), null);
+  assert.equal(trigger("issue_comment", stranger("@kodi-review"), REPOS).mode, "refuse");
 });
 
 test("help alone lists the commands for anyone, skin repos and their issues included", () => {
@@ -96,13 +96,27 @@ test("help alone lists the commands for anyone, skin repos and their issues incl
     [...REPOS, "xbmc/repo-skins"], ["xbmc/repo-skins"]);
   assert.equal(asked("@kodi-review help").mode, "help");
   assert.equal(asked("@kodi-review: Help?").mode, "help");
-  assert.equal(asked("@kodi-review help me with this"), null);
+  assert.equal(asked("@kodi-review help me with this").mode, "refuse");
   const repoSkins = { repository: { full_name: "xbmc/repo-skins" } };
   assert.equal(asked("@kodi-review help", repoSkins).mode, "help");
   assert.deepEqual(asked("@kodi-review help", { ...repoSkins, issue: { number: 497,
     state: "open" } }), { pr: "497", repo: "xbmc/repo-skins", comment: "issue/99", mode: "help",
     source: "issue" });
-  assert.equal(asked("@kodi-review help", { issue: { number: 3, state: "open" } }), null);
+  assert.equal(asked("@kodi-review help", { issue: { number: 3, state: "open" } }).mode, "refuse");
+});
+
+test("an ask on a closed thread, an issue or from a stranger comes as a refusal", () => {
+  const base = issueComment();
+  const refused = [
+    issueComment({ issue: { ...base.issue, pull_request: undefined } }),
+    issueComment({ issue: { ...base.issue, state: "closed" } }),
+    issueComment({ comment: { ...base.comment, author_association: "NONE" } }),
+  ];
+  for (const payload of refused) {
+    assert.deepEqual(trigger("issue_comment", payload, REPOS), { pr: "7", repo: "xbmc/xbmc",
+      comment: "issue/99", mode: "refuse",
+      source: payload.issue.pull_request ? "mention" : "issue" });
+  }
 });
 
 test("everything else is ignored", () => {
@@ -110,15 +124,12 @@ test("everything else is ignored", () => {
   const ignored = [
     issueComment({ action: "edited" }),
     issueComment({ repository: { full_name: "someone/xbmc" } }),
-    issueComment({ issue: { ...base.issue, pull_request: undefined } }),
-    issueComment({ issue: { ...base.issue, state: "closed" } }),
     issueComment({ comment: { ...base.comment, body: "thanks @kodi-reviewer" } }),
     issueComment({ comment: { ...base.comment, body: "ask @kodi-review-bot" } }),
     issueComment({ comment: { ...base.comment, body: "> @kodi-review review\n\nThanks" } }),
     issueComment({ comment: { ...base.comment, body: "Type `@kodi-review review` to ask" } }),
     issueComment({ comment: { ...base.comment, body: "```\n@kodi-review\n```" } }),
     issueComment({ comment: { ...base.comment, body: "<!-- @kodi-review -->" } }),
-    issueComment({ comment: { ...base.comment, author_association: "NONE" } }),
     issueComment({ comment: { ...base.comment, user: { type: "Bot" } } }),
   ];
   for (const payload of ignored) assert.equal(trigger("issue_comment", payload, REPOS), null);

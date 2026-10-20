@@ -29,7 +29,7 @@ export async function verify(secret, body, signature) {
   return crypto.subtle.verify("HMAC", key, digest, encoder.encode(body));
 }
 
-/** Return a new mention's inputs, or null for one this repo, page or asker does not take. */
+/** Return a new mention's inputs, or null; mode refuse when repo, page or asker rules it out. */
 export function trigger(event, payload, allowed, skinRepos = []) {
   if (payload.action !== "created" || !allowed.includes(payload.repository?.full_name)) return null;
   const comment = payload.comment;
@@ -38,7 +38,7 @@ export function trigger(event, payload, allowed, skinRepos = []) {
   const onIssue = event === "issue_comment" && !payload.issue?.pull_request;
   const pr = event === "issue_comment" ? payload.issue
     : event === "pull_request_review_comment" ? payload.pull_request : null;
-  if (!pr || pr.state !== "open") return null;
+  if (!pr) return null;
   const kind = event === "issue_comment" ? "issue" : "review";
   const at = MENTION.exec(words).index;
   const after = words.slice(at + "@kodi-review".length);
@@ -47,14 +47,12 @@ export function trigger(event, payload, allowed, skinRepos = []) {
     : REVIEW_ASK.test(after) ? "review" : "answer";
   const repo = payload.repository.full_name;
   const skinRepo = skinRepos.includes(repo);
-  if ((onIssue || skinRepo) && (!SKIN_REPO_MODES.has(mode) || !skinRepo)) return null;
   const again = mode === "skin" && AGAIN.test(after.split("\n", 1)[0]);
-  if ((!OPEN_MODES.has(mode) || again)
-    && STRANGERS.has(comment.author_association)) {
-    return null;
-  }
-  return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`, mode,
-    source: onIssue ? "issue" : "mention" };
+  const refused = pr.state !== "open"
+    || ((onIssue || skinRepo) && (!SKIN_REPO_MODES.has(mode) || !skinRepo))
+    || ((!OPEN_MODES.has(mode) || again) && STRANGERS.has(comment.author_association));
+  return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`,
+    mode: refused ? "refuse" : mode, source: onIssue ? "issue" : "mention" };
 }
 
 /** Return the bot's newest summary comment on a pull request, or null. */

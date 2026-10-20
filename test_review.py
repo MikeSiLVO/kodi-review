@@ -955,8 +955,9 @@ class TrimTests(unittest.TestCase):
 class TriggerTests(unittest.TestCase):
     """Deciding whether a comment may start a run, and whether it asks for a review or answer."""
 
-    def run_trigger(self, comment, access="write", asker="issue/5", mode="review", posted=(),
-                    skins=(), source="mention", build="kdk=1 style=a"):
+    def run_trigger(self, comment, access: str | None = "write", asker="issue/5", mode="review",
+                    posted=(), skins=(), source="mention", build="kdk=1 style=a", thread=None,
+                    told=()):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
@@ -968,6 +969,13 @@ class TriggerTests(unittest.TestCase):
                 raise refusals[-1]
             if path.endswith("/pulls/7"):
                 return {"head": {"sha": "a" * 40}}
+            if path.endswith("/issues/7"):
+                return thread or {"state": "open", "pull_request": {}}
+            if "/pulls/7/comments" in path:
+                return []
+            if "/issues/7/comments" in path and told:
+                return [{"user": {"type": "Bot"}, "body": f"<!-- kodi-review refused {key} -->"}
+                        for key in told]
             if "/issues/7/comments" in path:
                 return ([{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
                          for sha in posted]
@@ -1072,7 +1080,7 @@ class TriggerTests(unittest.TestCase):
         calls, code = self.run_trigger(self.comment(body="@kodi-review format"), access="none",
                                        mode="format", posted=["a" * 40])
         self.assertIn("already posted", str(code))
-        self.assertNotIn("POST", [method for method, _ in calls])
+        self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/7/comments"))
 
     def test_anyone_may_ask_for_the_skin_check_once_per_head(self):
         """A skin ask needs no write access, and is refused once the head has its skin check."""
@@ -1082,7 +1090,7 @@ class TriggerTests(unittest.TestCase):
         self.assertFalse(any(path.endswith("/permission") for _, path in calls))
         self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
         calls, code = self.run_trigger(ask, access="none", mode="skin", skins=["a" * 40])
-        self.assertIn("already posted", str(code))
+        self.assertIn("Already checked at `aaaaaaaaaaaa`", str(code))
         link = self.comment(body="@kodi-review skin https://github.com/o/skin.x/tree/v1")
         calls, code = self.run_trigger(link, access="none", mode="skin", source="issue")
         self.assertIsNone(code)
@@ -1108,7 +1116,7 @@ class TriggerTests(unittest.TestCase):
             self.assertIn("needs write access", str(code))
         later = self.comment(body="@kodi-review skin\nI'll ask again after the fix.")
         calls, code = self.run_trigger(later, access="none", mode="skin", skins=["a" * 40])
-        self.assertIn("already posted", str(code))
+        self.assertIn("Already checked", str(code))
 
     def test_asks_again(self):
         """Only again on the line of the first mention the comment says counts."""
@@ -1128,12 +1136,12 @@ class TriggerTests(unittest.TestCase):
                          rf"^kdk={re.escape(wheel.name.split('-')[1])} style=[0-9a-f]{{12}}$")
 
     def test_skin_repos_take_only_the_skin_check_and_help(self):
-        """On a skin repository a review or format ask is refused even from a writer."""
+        """On a skin repository a review or format ask is refused and told why, even a writer's."""
         with mock.patch.object(review, "REPO", "xbmc/repo-skins"):
             for body, mode in (("@kodi-review", "review"), ("@kodi-review format", "format")):
                 calls, code = self.run_trigger(self.comment(body=body), mode=mode)
-                self.assertIn("Only the skin check", str(code))
-                self.assertNotIn("POST", [method for method, _ in calls])
+                self.assertIn("Only `@kodi-review skin`", str(code))
+                self.assertEqual(calls[-1], ("POST", "/repos/xbmc/repo-skins/issues/7/comments"))
             for body, mode in (("@kodi-review skin", "skin"), ("@kodi-review help", "help")):
                 self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
 
@@ -1146,20 +1154,66 @@ class TriggerTests(unittest.TestCase):
         self.assertEqual(calls[0], ("GET", f"/repos/{review.REPO}/pulls/comments/6"))
 
     def test_refused(self):
-        """No mention, a quoted or code one, another PR, low access or a bad id are refused."""
-        cases = [(self.comment(body="thanks @kodi-reviewer"), "write", "issue/5"),
-                 (self.comment(body="> @kodi-review review\n\nAgreed."), "write", "issue/5"),
-                 (self.comment(body="Type `@kodi-review review`."), "write", "issue/5"),
-                 (self.comment(body="```\n@kodi-review\n```"), "write", "issue/5"),
-                 (self.comment(url="https://api.github.com/repos/o/r/issues/17"), "write",
-                  "issue/5"),
-                 (self.comment(), "read", "issue/5"),
-                 (self.comment(), None, "issue/5"),
-                 (self.comment(), "write", "issue/5; rm")]
-        for comment, access, asker in cases:
-            calls, code = self.run_trigger(comment, access, asker)
-            self.assertTrue(code, (access, asker))
+        """No mention, a quoted or code one, another PR or a bad id is refused in silence."""
+        cases = [(self.comment(body="thanks @kodi-reviewer"), "issue/5"),
+                 (self.comment(body="> @kodi-review review\n\nAgreed."), "issue/5"),
+                 (self.comment(body="Type `@kodi-review review`."), "issue/5"),
+                 (self.comment(body="```\n@kodi-review\n```"), "issue/5"),
+                 (self.comment(url="https://api.github.com/repos/o/r/issues/17"), "issue/5"),
+                 (self.comment(), "issue/5; rm")]
+        for comment, asker in cases:
+            calls, code = self.run_trigger(comment, asker=asker)
+            self.assertTrue(code, asker)
             self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_low_access_is_told_why_once(self):
+        """A review or question without write access gets the reason once, then a 😕 reaction."""
+        for access, asked, words in ((None, "@kodi-review", "Reviews need"),
+                                     ("read", "@kodi-review why?", "Questions need")):
+            calls, code = self.run_trigger(self.comment(body=asked), access,
+                                           mode="review" if asked == "@kodi-review" else "answer")
+            self.assertIn(f"{words} write access", str(code))
+            self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/7/comments"))
+        calls, code = self.run_trigger(self.comment(), "read", told=["access review"])
+        self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
+
+    def test_low_access_reply_under_a_finding_is_not_told(self):
+        """A reply without a mention from someone without write access ends in silence."""
+        reply = {"body": "Fixed.", "pull_request_url": "https://api.github.com/repos/o/r/pulls/7",
+                 "user": {"login": "dev"}}
+        with mock.patch.object(review, "replies_to_finding", return_value=True):
+            calls, code = self.run_trigger(reply, "read", asker="review/5", mode="answer",
+                                           source="reply")
+        self.assertIn("a reply needs write access", str(code))
+        self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_relay_refusals_are_told_why(self):
+        """A refused ask says the thread is closed, not a pull request, or needs write access."""
+        cases = (({"state": "closed", "pull_request": {}}, "write", "This is closed"),
+                 ({"state": "open"}, "write", "I only run on pull requests"),
+                 ({"state": "open", "pull_request": {}}, "none", "Reviews need write access"))
+        for thread, access, reason in cases:
+            calls, code = self.run_trigger(self.comment(), access, mode="refuse", thread=thread)
+            self.assertIn(reason, str(code))
+            self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/7/comments"))
+        calls, code = self.run_trigger(self.comment(), mode="refuse")
+        self.assertIn("finds nothing to refuse", str(code))
+        self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_tell_quotes_the_ask_or_replies_in_its_thread(self):
+        """The reason replies inline, or in the conversation under the ask's unlinked first line."""
+        ask = {"body": "@kodi-review review @someone\nmore", "user": {"login": "dev"}}
+        for asker, path in (("issue/5", f"/repos/{review.REPO}/issues/7/comments"),
+                            ("review/5", f"/repos/{review.REPO}/pulls/7/comments/5/replies")):
+            with mock.patch.object(review, "request", return_value=[]) as req, \
+                    mock.patch.object(review, "fetch_comment", return_value=ask), \
+                    mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7"}):
+                review.tell("access review", "Reviews need write access.")
+            method, posted, body = req.call_args.args
+            self.assertEqual((method, posted), ("POST", path))
+            self.assertTrue(body["body"].startswith("<!-- kodi-review refused access review -->"))
+            self.assertTrue(body["body"].endswith("Reviews need write access."))
+            self.assertNotIn("@someone", body["body"])
 
     def test_deleted_comment(self):
         """A deleted comment ends the run with a message, not a traceback."""
