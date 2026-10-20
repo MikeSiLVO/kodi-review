@@ -1030,15 +1030,14 @@ class TriggerTests(unittest.TestCase):
                            ("@kodi-review format this?", "answer")):
             self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
 
-    def test_help_needs_a_writer_and_gets_no_reaction(self):
-        """Help alone after the mention asks for the command list, from writers, with no 👀."""
+    def test_anyone_may_ask_for_help_and_gets_no_reaction(self):
+        """Help alone after the mention asks for the command list, from anyone, with no 👀."""
         for body in ("@kodi-review help", "@kodi-review: Help?"):
-            calls, code = self.run_trigger(self.comment(body=body), mode="help")
+            calls, code = self.run_trigger(self.comment(body=body), access="none", mode="help")
             self.assertIsNone(code, body)
             self.assertNotIn("POST", [method for method, _ in calls])
+            self.assertFalse(any(path.endswith("/permission") for _, path in calls))
         self.assertTrue(self.run_trigger(self.comment(body="@kodi-review help me"),
-                                         mode="help")[1])
-        self.assertTrue(self.run_trigger(self.comment(body="@kodi-review help"), access="read",
                                          mode="help")[1])
 
     def test_help_is_posted_where_it_was_asked(self):
@@ -1050,6 +1049,18 @@ class TriggerTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7"}):
                 review.cmd_help()
             self.assertEqual([c.args for c in req.call_args_list], [("POST", path, {"body": body})])
+
+    def test_skin_repos_get_their_own_command_list(self):
+        """On a skin repository help lists only what runs there, with the skin asks linked."""
+        body = review.SKIN_HELP_FILE.read_text().strip()
+        self.assertNotIn("format", body)
+        self.assertIn("#skin-check)", body)
+        with mock.patch.object(review, "REPO", "xbmc/repo-skins"), \
+                mock.patch.object(review, "request") as req, \
+                mock.patch.dict(os.environ, {"COMMENT": "issue/5", "FORK_PR": "497"}):
+            review.cmd_help()
+        self.assertEqual(req.call_args.args,
+                         ("POST", "/repos/xbmc/repo-skins/issues/497/comments", {"body": body}))
 
     def test_anyone_may_ask_for_formatting_once_per_head(self):
         """A format request needs no write access, and is refused once the head has its check."""
@@ -1116,15 +1127,15 @@ class TriggerTests(unittest.TestCase):
         self.assertRegex(review.skin_build(),
                          rf"^kdk={re.escape(wheel.name.split('-')[1])} style=[0-9a-f]{{12}}$")
 
-    def test_skin_repos_take_only_the_skin_check(self):
+    def test_skin_repos_take_only_the_skin_check_and_help(self):
         """On a skin repository a review or format ask is refused even from a writer."""
         with mock.patch.object(review, "REPO", "xbmc/repo-skins"):
             for body, mode in (("@kodi-review", "review"), ("@kodi-review format", "format")):
                 calls, code = self.run_trigger(self.comment(body=body), mode=mode)
                 self.assertIn("Only the skin check", str(code))
                 self.assertNotIn("POST", [method for method, _ in calls])
-            self.assertIsNone(self.run_trigger(self.comment(body="@kodi-review skin"),
-                                               mode="skin")[1])
+            for body, mode in (("@kodi-review skin", "skin"), ("@kodi-review help", "help")):
+                self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
 
     def test_line_comment_is_read_from_pulls(self):
         """A line comment is read from the pull request comments and passes."""

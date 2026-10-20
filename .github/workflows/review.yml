@@ -36,7 +36,7 @@ on:
         required: false
         type: string
       source:
-        description: "Set by the relay: mention, reply (in a finding's thread), push, or issue (a skin ask on an issue)"
+        description: "Set by the relay: mention, reply (in a finding's thread), push, or issue (a skin or help ask on an issue)"
         required: false
         type: string
 
@@ -111,7 +111,7 @@ jobs:
       - name: Post the list of commands
         if: inputs.mode == 'help'
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || steps.issue_app.outputs.token }}
         run: python3 bot/review.py help
 
   review:

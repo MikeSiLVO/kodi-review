@@ -89,14 +89,20 @@ test("format, clang or clang-format alone asks for the formatting check, from an
   assert.equal(trigger("issue_comment", stranger("@kodi-review"), REPOS), null);
 });
 
-test("help alone asks for the command list, from writers only", () => {
+test("help alone lists the commands for anyone, skin repos and their issues included", () => {
   const base = issueComment();
-  const asked = (body, author_association = "MEMBER") => trigger("issue_comment",
-    issueComment({ comment: { ...base.comment, body, author_association } }), REPOS);
+  const asked = (body, changes = {}) => trigger("issue_comment", issueComment({ ...changes,
+    comment: { ...base.comment, body, author_association: "NONE" } }),
+    [...REPOS, "xbmc/repo-skins"], ["xbmc/repo-skins"]);
   assert.equal(asked("@kodi-review help").mode, "help");
   assert.equal(asked("@kodi-review: Help?").mode, "help");
-  assert.equal(asked("@kodi-review help me with this").mode, "answer");
-  assert.equal(asked("@kodi-review help", "NONE"), null);
+  assert.equal(asked("@kodi-review help me with this"), null);
+  const repoSkins = { repository: { full_name: "xbmc/repo-skins" } };
+  assert.equal(asked("@kodi-review help", repoSkins).mode, "help");
+  assert.deepEqual(asked("@kodi-review help", { ...repoSkins, issue: { number: 497,
+    state: "open" } }), { pr: "497", repo: "xbmc/repo-skins", comment: "issue/99", mode: "help",
+    source: "issue" });
+  assert.equal(asked("@kodi-review help", { issue: { number: 3, state: "open" } }), null);
 });
 
 test("everything else is ignored", () => {

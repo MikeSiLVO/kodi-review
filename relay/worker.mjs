@@ -11,6 +11,8 @@ export function spoken(body) {
   return body.replace(QUOTED, " ");
 }
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
+const OPEN_MODES = new Set(["format", "skin", "help"]);
+const SKIN_REPO_MODES = new Set(["skin", "help"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
 const SUMMARY = /^<!-- kodi-review sha=/;
@@ -45,9 +47,9 @@ export function trigger(event, payload, allowed, skinRepos = []) {
     : REVIEW_ASK.test(after) ? "review" : "answer";
   const repo = payload.repository.full_name;
   const skinRepo = skinRepos.includes(repo);
-  if ((onIssue || skinRepo) && (mode !== "skin" || !skinRepo)) return null;
+  if ((onIssue || skinRepo) && (!SKIN_REPO_MODES.has(mode) || !skinRepo)) return null;
   const again = mode === "skin" && AGAIN.test(after.split("\n", 1)[0]);
-  if (((mode !== "format" && mode !== "skin") || again)
+  if ((!OPEN_MODES.has(mode) || again)
     && STRANGERS.has(comment.author_association)) {
     return null;
   }

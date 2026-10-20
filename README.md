@@ -6,8 +6,8 @@ the code, and adds a status block.
 
 Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) GitHub App. To use it
 on a repo, install the App there with its two permissions: Pull requests (read and write) and
-Issues (read and write, for skin checks on issues). Mentions only work in xbmc/xbmc,
-xbmc/repo-skins and my test forks of both; repo-skins takes only the skin check.
+Issues (read and write, for skin checks and help on issues). Mentions only work in xbmc/xbmc,
+xbmc/repo-skins and my test forks of both; repo-skins takes only the skin check and help.
 
 ## How a review runs
 
@@ -45,8 +45,9 @@ and a reply that only agrees or says a fix is coming gets a 👍.
 
 ## Help
 
-`@kodi-review help` alone posts the list of commands from `HELP.md`, in the same thread or the main
-conversation. Only people with write access can ask.
+`@kodi-review help` alone posts the commands that work in that repository, from `HELP.md`, or
+`HELP_SKINS.md` on repo-skins, in the same thread or the main conversation. The other commands
+each link to their section here. Anyone can ask.
 
 ## Formatting only
 

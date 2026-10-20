@@ -61,6 +61,7 @@ FORMAT_CONFIGS = (".clang-format", ".clang-format-ignore")
 FORMAT_CHAR_LIMIT = 20_000
 KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
 HELP_FILE = Path(__file__).resolve().parent / "HELP.md"
+SKIN_HELP_FILE = Path(__file__).resolve().parent / "HELP_SKINS.md"
 KNOWLEDGE_LIMIT = 38_000
 KNOWLEDGE_HEADER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 TITLE_TAG = re.compile(r"\[([^\]]+)\]")
@@ -1489,8 +1490,8 @@ def cmd_trigger():
             asked = "review"
     if asked != os.environ.get("MODE", "review"):
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
-    if REPO in SKIN_REPOS and asked != "skin":
-        sys.exit(f"Only the skin check runs on {REPO}.")
+    if REPO in SKIN_REPOS and asked not in ("skin", "help"):
+        sys.exit(f"Only the skin check and help run on {REPO}.")
     again = asked == "skin" and asks_again(comment.get("body") or "")
     if asked == "skin" and not again:
         if os.environ.get("SOURCE") != "issue":
@@ -1504,7 +1505,7 @@ def cmd_trigger():
         posted = {m[1] for c in format_comments() if (m := FORMAT_MARKER.match(c["body"]))}
         if head in posted:
             sys.exit(f"The formatting check of {head[:12]} is already posted.")
-    else:
+    elif asked != "help":
         login = (comment.get("user") or {}).get("login", "")
         try:
             access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]
@@ -1606,10 +1607,10 @@ def cmd_reply():
 
 
 def cmd_help():
-    """Post the list of commands where help was asked: in its thread or the conversation."""
+    """Post this repo's list of commands where help was asked: in its thread or the conversation."""
     kind, number = asking_comment()
     pr = os.environ["FORK_PR"]
-    body = HELP_FILE.read_text().strip()
+    body = (SKIN_HELP_FILE if REPO in SKIN_REPOS else HELP_FILE).read_text().strip()
     if kind == "review":
         request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{number}/replies", {"body": body})
     else:
