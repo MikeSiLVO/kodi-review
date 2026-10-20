@@ -122,7 +122,7 @@ def check(name, case, work):
     patches = [mock.patch.object(skin, "REPO", case["repo"])]
     if case["kind"] == "link":
         branch = {"commit": {"sha": case["base"]}}
-        patches += [mock.patch.object(skin, "issue_link", return_value=("", "")),
+        patches += [mock.patch.object(skin, "issue_link", return_value=(("", ""), False)),
                     mock.patch.object(skin, "resolve_link", return_value=(
                         case["archive"], case["key"], case["shown"])),
                     mock.patch.object(skin, "checked_before", return_value=False),

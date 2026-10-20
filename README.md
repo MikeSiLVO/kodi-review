@@ -67,8 +67,10 @@ a table naming every finding with its count and up to 10 of its places. Fixed fi
 the skin muted (with its reasons) and those already there before get closed folds of their own;
 a new skin counts everything as new. Past GitHub's comment size, each table keeps its 25 largest
 findings, then tables go, warnings and smallest first, and the run's summary page lists every
-finding. Anyone can ask, since no model runs, once per head or link. Omega and Piers skins are
-checked; master counts as Piers while their xbmc.gui versions match.
+finding. Anyone can ask, since no model runs. A commit or link already checked is checked again
+only after the bot's checks are updated; `again` on the asking line, before or after the link,
+checks it anyway and needs write access. Each new check hides the last one. Omega and Piers
+skins are checked; master counts as Piers while their xbmc.gui versions match.
 
 ## Files
 

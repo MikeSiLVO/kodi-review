@@ -19,8 +19,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from review import (CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, hide_summaries, paged,
-                    request, skin_comments, unlinked)
+from review import (AGAIN, CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, asks_again,
+                    hide_summaries, paged, request, skin_build, skin_comments, unlinked)
 
 KODI_REPOS = ("xbmc/xbmc", "MikeSiLVO/xbmc")
 GUI_RELEASES = {"5.17": "omega", "5.18": "piers"}
@@ -60,13 +60,15 @@ class SkinError(Exception):
 
 
 def asked_source(text):
-    """Return the first link in the text and the word after it, or None without a link."""
+    """Return the first link in the text and the revision after it, or None without a link."""
     match = LINK.search(text)
     if not match:
         return None
     after = text[match.end():].lstrip(")>]`'\"").split(None, 1)
     word = after[0].strip("`'\"") if after else ""
-    return match[0].rstrip(".,;:!"), word if REVISION.fullmatch(word) else ""
+    if not REVISION.fullmatch(word) or AGAIN.fullmatch(word):
+        word = ""
+    return match[0].rstrip(".,;:!"), word
 
 
 def github_page(link, revision=""):
@@ -452,14 +454,14 @@ def check_skins_pr(scratch):
 
 
 def issue_link():
-    """Return the link and revision the asking comment gives after the skin ask."""
+    """Return the link and revision the asking comment gives, and whether it asks again."""
     number = os.environ["COMMENT"].partition("/")[2]
     body = request("GET", f"/repos/{REPO}/issues/comments/{number}")["body"] or ""
     source = asked_source(SKIN_ASK.sub("", ASK_START.split(body, 1)[-1], count=1))
     if not source:
         raise SkinError("give the skin's link: `@kodi-review skin <link>`, a GitHub repo at a "
                         "commit, branch or tag, or a zip")
-    return source
+    return source, asks_again(body)
 
 
 def resolve_link(link, revision):
@@ -487,14 +489,15 @@ def addon_id(info):
 
 
 def checked_before(key):
-    """Whether the bot already posted a check of this source on the issue."""
-    return any(f"source={key} " in c["body"] for c in skin_comments())
+    """Whether the bot already posted a check of this source, kdk and skin.py on the issue."""
+    return any(f"source={key} {skin_build()} -->" in c["body"] for c in skin_comments())
 
 
 def check_issue(scratch):
     """Check the skin a submission issue's comment links to, against what its branch ships."""
-    archive, key, shown = resolve_link(*issue_link())
-    if checked_before(key):
+    (link, revision), again = issue_link()
+    archive, key, shown = resolve_link(link, revision)
+    if checked_before(key) and not again:
         return {"key": f"source={key}", "skip": "already checked"}
     download(archive, scratch / "download")
     tree = scratch / "head" / "link"
@@ -913,7 +916,8 @@ def cmd_post():
     text = unlinked(skin_text(facts))
     withheld = bool(CREDENTIAL.search(text))
     request("POST", f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments",
-            {"body": f"<!-- kodi-review skin {facts['key']} -->\n{WITHHELD if withheld else text}"})
+            {"body": f"<!-- kodi-review skin {facts['key']} {skin_build()} -->\n"
+                     f"{WITHHELD if withheld else text}"})
     if earlier:
         hide_summaries(earlier)
     if withheld:

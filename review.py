@@ -1,5 +1,6 @@
 """Workflow helpers for the Kodi PR review: last reviewed commit, Kodi 22 files, status, posting."""
 
+import hashlib
 import json
 import os
 import re
@@ -21,7 +22,7 @@ KODI = "xbmc/xbmc"
 RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
-SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+) -->")
+SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+)(.*?) -->")
 SKIN_REPOS = ("xbmc/repo-skins", "MikeSiLVO/repo-skins")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
@@ -134,6 +135,7 @@ REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
 HELP_ASK = re.compile(r"[\s,:.!]*help[\s,:.!?]*$", re.I)
 SKIN_ASK = re.compile(r"[\s,:.!]*skin\b", re.I)
+AGAIN = re.compile(r"\bagain\b", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
              "touches.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
@@ -1443,6 +1445,22 @@ def skin_comments():
             if c["user"]["type"] == "Bot" and SKIN_MARKER.match(c["body"] or "")]
 
 
+def skin_build():
+    """Return the vendored kdk version and skin.py's hash that a skin check's marker carries."""
+    here = Path(__file__).resolve().parent
+    wheels = sorted((here / "vendor" / "kdk").glob("kdk-*.whl"))
+    kdk = wheels[-1].name.split("-")[1] if wheels else "none"
+    style = hashlib.sha256((here / "skin.py").read_bytes()).hexdigest()[:12]
+    return f"kdk={kdk} style={style}"
+
+
+def asks_again(body):
+    """Whether the line of the comment's first mention asks to check again."""
+    said = spoken(body)
+    mention = BOT_MENTION.search(said)
+    return bool(mention and AGAIN.search(said[mention.end():].partition("\n")[0]))
+
+
 def cmd_trigger():
     """Exit 1 unless a push or an ask this repo and asker may make; react to non-help mentions."""
     if os.environ.get("SOURCE") == "push":
@@ -1473,10 +1491,13 @@ def cmd_trigger():
         sys.exit(f"The comment asks for {asked}, not {os.environ.get('MODE', 'review')}.")
     if REPO in SKIN_REPOS and asked != "skin":
         sys.exit(f"Only the skin check runs on {REPO}.")
-    if asked == "skin":
+    again = asked == "skin" and asks_again(comment.get("body") or "")
+    if asked == "skin" and not again:
         if os.environ.get("SOURCE") != "issue":
             head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
-            if any(m[2] == head for c in skin_comments() if (m := SKIN_MARKER.match(c["body"]))):
+            build = skin_build()
+            if any(m[2] == head and m[3].strip() == build
+                   for c in skin_comments() if (m := SKIN_MARKER.match(c["body"]))):
                 sys.exit(f"The skin check of {head[:12]} is already posted.")
     elif asked == "format":
         head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]

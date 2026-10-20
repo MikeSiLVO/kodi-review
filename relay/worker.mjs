@@ -3,6 +3,7 @@ const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
 const FORMAT_ASK = /^[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$/i;
 const HELP_ASK = /^[\s,:.!]*help[\s,:.!?]*$/i;
 const SKIN_ASK = /^[\s,:.!]*skin\b/i;
+const AGAIN = /\bagain\b/i;
 const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
 
 /** Return a comment's own words, without code, quoted lines or HTML comments. */
@@ -45,7 +46,9 @@ export function trigger(event, payload, allowed, skinRepos = []) {
   const repo = payload.repository.full_name;
   const skinRepo = skinRepos.includes(repo);
   if ((onIssue || skinRepo) && (mode !== "skin" || !skinRepo)) return null;
-  if (mode !== "format" && mode !== "skin" && STRANGERS.has(comment.author_association)) {
+  const again = mode === "skin" && AGAIN.test(after.split("\n", 1)[0]);
+  if (((mode !== "format" && mode !== "skin") || again)
+    && STRANGERS.has(comment.author_association)) {
     return null;
   }
   return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`, mode,

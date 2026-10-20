@@ -74,6 +74,7 @@ class LinkTests(unittest.TestCase):
                  " [here](https://x.org/s.zip). Thanks!": ("https://x.org/s.zip", ""),
                  " https://github.com/o/r/tree/v1, please": ("https://github.com/o/r/tree/v1",
                                                             "please"),
+                 " https://github.com/o/skin.x again": ("https://github.com/o/skin.x", ""),
                  " please check it": None,
                  " http://x.org/s.zip": None}
         for text, expected in cases.items():
@@ -523,6 +524,18 @@ class RenderTests(unittest.TestCase):
 class PostTests(unittest.TestCase):
     """Posting the skin check once per source, hiding the earlier ones."""
 
+    def test_checked_before_needs_the_same_build(self):
+        """An issue's source counts as checked only under the same kdk and skin.py."""
+        posted = [{"body": "<!-- kodi-review skin source=github:o/r@1 kdk=1 style=a -->\nx"},
+                  {"body": "<!-- kodi-review skin source=github:o/r@2 -->\nx"}]
+        with mock.patch.object(skin, "skin_comments", return_value=posted), \
+                mock.patch.object(skin, "skin_build", return_value="kdk=1 style=a"):
+            self.assertTrue(skin.checked_before("github:o/r@1"))
+            self.assertFalse(skin.checked_before("github:o/r@2"))
+        with mock.patch.object(skin, "skin_comments", return_value=posted), \
+                mock.patch.object(skin, "skin_build", return_value="kdk=2 style=a"):
+            self.assertFalse(skin.checked_before("github:o/r@1"))
+
     def test_post_and_skip(self):
         """A result posts under its marker and hides earlier checks; a repeat posts nothing."""
         with tempfile.TemporaryDirectory() as tmp, \
@@ -530,12 +543,13 @@ class PostTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"FORK_PR": "7"}), \
                 mock.patch.object(skin, "skin_comments", return_value=[{"node_id": "n"}]), \
                 mock.patch.object(skin, "hide_summaries") as hide, \
+                mock.patch.object(skin, "skin_build", return_value="kdk=1 style=a"), \
                 mock.patch.object(skin, "request") as req:
             (Path(tmp) / "skin.json").write_text(json.dumps({"key": "sha=abc", "error": "x"}))
             skin.cmd_post()
             body = req.call_args.args[2]["body"]
-            self.assertTrue(body.startswith("<!-- kodi-review skin sha=abc -->\n"))
-            self.assertTrue(review.SKIN_MARKER.match(body))
+            self.assertTrue(body.startswith("<!-- kodi-review skin sha=abc kdk=1 style=a -->\n"))
+            self.assertEqual(review.SKIN_MARKER.findall(body), [("sha", "abc", " kdk=1 style=a")])
             hide.assert_called_once()
             req.reset_mock()
             (Path(tmp) / "skin.json").write_text(json.dumps({"key": "source=k", "skip": "done"}))

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -955,7 +956,7 @@ class TriggerTests(unittest.TestCase):
     """Deciding whether a comment may start a run, and whether it asks for a review or answer."""
 
     def run_trigger(self, comment, access="write", asker="issue/5", mode="review", posted=(),
-                    skins=(), source="mention"):
+                    skins=(), source="mention", build="kdk=1 style=a"):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
@@ -970,7 +971,8 @@ class TriggerTests(unittest.TestCase):
             if "/issues/7/comments" in path:
                 return ([{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
                          for sha in posted]
-                        + [{"user": {"type": "Bot"}, "body": f"<!-- kodi-review skin sha={sha} -->"}
+                        + [{"user": {"type": "Bot"},
+                            "body": f"<!-- kodi-review skin sha={sha} kdk=1 style=a -->"}
                            for sha in skins])
             if path.endswith("/permission"):
                 if access is None:
@@ -981,6 +983,7 @@ class TriggerTests(unittest.TestCase):
                 return comment
             return None
         with mock.patch.object(review, "request", side_effect=reply), \
+                mock.patch.object(review, "skin_build", return_value=build), \
                 mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode,
                                              "SOURCE": source}):
             try:
@@ -1073,6 +1076,45 @@ class TriggerTests(unittest.TestCase):
         calls, code = self.run_trigger(link, access="none", mode="skin", source="issue")
         self.assertIsNone(code)
         self.assertFalse(any(path.endswith("/pulls/7") for _, path in calls))
+
+    def test_new_kdk_or_skin_check_lets_a_head_be_checked_again(self):
+        """A head already checked runs again once the kdk or skin.py in the marker differs."""
+        ask = self.comment(body="@kodi-review skin")
+        for build in ("kdk=2 style=a", "kdk=1 style=b"):
+            code = self.run_trigger(ask, access="none", mode="skin", skins=["a" * 40],
+                                    build=build)[1]
+            self.assertIsNone(code, build)
+
+    def test_skin_again_needs_write_access_and_skips_nothing(self):
+        """Again on the asking line, before or after a link, rechecks a head for writers only."""
+        for body in ("@kodi-review skin again", "@kodi-review skin again https://x.org/s.zip",
+                     "@kodi-review skin https://x.org/s.zip again"):
+            ask = self.comment(body=body)
+            calls, code = self.run_trigger(ask, mode="skin", skins=["a" * 40])
+            self.assertIsNone(code, body)
+            self.assertFalse(any(path.endswith("/pulls/7") for _, path in calls))
+            calls, code = self.run_trigger(ask, access="none", mode="skin", skins=["a" * 40])
+            self.assertIn("needs write access", str(code))
+        later = self.comment(body="@kodi-review skin\nI'll ask again after the fix.")
+        calls, code = self.run_trigger(later, access="none", mode="skin", skins=["a" * 40])
+        self.assertIn("already posted", str(code))
+
+    def test_asks_again(self):
+        """Only again on the line of the first mention the comment says counts."""
+        cases = {"@kodi-review skin again": True,
+                 "@kodi-review skin https://github.com/o/r AGAIN": True,
+                 "@kodi-review skin\nagain": False,
+                 "> @kodi-review skin again\n\n@kodi-review skin": False,
+                 "@kodi-review skin `again`": False,
+                 "@kodi-review skin against it": False}
+        for body, expected in cases.items():
+            self.assertEqual(review.asks_again(body), expected, body)
+
+    def test_skin_build_names_the_vendored_kdk(self):
+        """The build names the vendored wheel's kdk version and a short hash of skin.py."""
+        wheel = next((Path(review.__file__).parent / "vendor" / "kdk").glob("kdk-*.whl"))
+        self.assertRegex(review.skin_build(),
+                         rf"^kdk={re.escape(wheel.name.split('-')[1])} style=[0-9a-f]{{12}}$")
 
     def test_skin_repos_take_only_the_skin_check(self):
         """On a skin repository a review or format ask is refused even from a writer."""

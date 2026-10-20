@@ -38,7 +38,7 @@ test("a comment opening with the mention and review or nothing asks for a review
   }
 });
 
-test("skin asks a skin check from anyone; skin repos and their issues take only that", () => {
+test("skin asks a check from anyone, skin again only members; skin repos take only that", () => {
   const skins = ["xbmc/repo-skins"];
   const repos = [...REPOS, ...skins];
   const ask = (body, changes = {}) => issueComment({ ...changes, comment: {
@@ -50,6 +50,13 @@ test("skin asks a skin check from anyone; skin repos and their issues take only 
   assert.deepEqual(trigger("issue_comment", ask("@kodi-review skin https://x.org/s.zip", issue),
     repos, skins), { pr: "497", repo: "xbmc/repo-skins", comment: "issue/99", mode: "skin",
     source: "issue" });
+  for (const body of ["@kodi-review skin again", "@kodi-review skin https://x.org/s.zip again"]) {
+    assert.equal(trigger("issue_comment", ask(body, issue), repos, skins), null, body);
+    const member = issueComment({ ...issue, comment: { ...issueComment().comment, body } });
+    assert.equal(trigger("issue_comment", member, repos, skins).mode, "skin", body);
+  }
+  assert.equal(trigger("issue_comment", ask("@kodi-review skin\nagain later"), repos, skins).mode,
+    "skin");
   for (const [body, changes] of [["@kodi-review", repoSkins], ["@kodi-review format", issue],
     ["@kodi-review skin", { issue: { number: 3, state: "open" } }],
     ["@kodi-review skin https://x.org/s.zip", { ...issue, issue: { number: 497,
