@@ -1652,6 +1652,33 @@ class FollowUpTests(unittest.TestCase):
                 else:
                     review.cmd_trigger()
 
+    def test_push_rechecks_skins_while_the_last_check_shows_new_errors(self):
+        """A push rechecks the skins when the newest check shows new errors and is not current."""
+        def check(verdict, sha="b" * 40, build="kdk=1 style=a"):
+            """Return a skin check comment with the given verdict line."""
+            return {"body": f"<!-- kodi-review skin sha={sha} {build} -->\n**Skin check** · x\n\n"
+                            f"{verdict}\n"}
+        cases = [([], True),
+                 ([check("2 new errors and 3 new warnings.")], False),
+                 ([check("94 errors and 660 warnings.")], False),
+                 ([check("1 new error. 4 fixed.")], False),
+                 ([check("No new problems. 3 already there before 1.0.")], True),
+                 ([check("5 new warnings.")], True),
+                 ([check("2 new errors."), check("No new problems.")], True),
+                 ([check("2 new errors.", sha="a" * 40)], True),
+                 ([check("2 new errors.", sha="a" * 40, build="kdk=0 style=a")], False)]
+        head = {"head": {"sha": "a" * 40}}
+        for checks, stops in cases:
+            with mock.patch.object(review, "skin_comments", return_value=checks), \
+                    mock.patch.object(review, "skin_build", return_value="kdk=1 style=a"), \
+                    mock.patch.object(review, "request", return_value=head), \
+                    mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "skin",
+                                                 "FORK_PR": "7"}):
+                if stops:
+                    self.assertRaises(SystemExit, review.cmd_trigger)
+                else:
+                    review.cmd_trigger()
+
     def test_reply_needs_an_open_finding_above_it_and_gets_no_reaction(self):
         """A writer's reply to the bot's open finding starts a run; other replies do not."""
         reply = {"body": "Agreed.", "in_reply_to_id": 4, "user": {"login": "dev"},

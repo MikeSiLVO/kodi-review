@@ -23,6 +23,7 @@ RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
 SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+)(.*?) -->")
+NEW_ERRORS = re.compile(r"^\d+ (?:new )?errors?\b", re.M)
 SKIN_REPOS = ("xbmc/repo-skins", "MikeSiLVO/repo-skins")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
@@ -1430,6 +1431,17 @@ def check_recheck():
         sys.exit(f"{len(recent)} reviews in the last day; push rechecks wait for a mention.")
 
 
+def check_skin_recheck():
+    """Check a push may recheck skins: exit 1 unless the last check is stale and has new errors."""
+    checks = skin_comments()
+    if not checks or not NEW_ERRORS.search(checks[-1]["body"] or ""):
+        sys.exit("No skin check with new errors here, so a push needs no recheck.")
+    head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+    marker = SKIN_MARKER.match(checks[-1]["body"])
+    if marker and marker[2] == head and marker[3].strip() == skin_build():
+        sys.exit(f"The skin check of {head[:12]} is already posted.")
+
+
 def replies_to_finding(comment):
     """Whether a review comment replies to one of the bot's unsettled findings."""
     parent = comment.get("in_reply_to_id")
@@ -1493,9 +1505,12 @@ def refuse(key, text):
 
 
 def cmd_trigger():
-    """Exit 1 unless a push or allowed ask; tell a refused mention why, react to non-help ones."""
+    """Exit 1 unless a due push or allowed ask; tell a refused mention why, react if not help."""
     if os.environ.get("SOURCE") == "push":
-        check_recheck()
+        if os.environ.get("MODE") == "skin":
+            check_skin_recheck()
+        else:
+            check_recheck()
         return
     kind, number = asking_comment()
     path = f"/repos/{REPO}/{'issues' if kind == 'issue' else 'pulls'}/comments/{number}"

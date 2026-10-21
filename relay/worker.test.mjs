@@ -196,7 +196,7 @@ test("a push after a summary with open problems asks for a recheck", async () =>
   const open = lookup({ [path]: [summary("Ready to merge"),
     summary("Merge after small fixes · 1 problem (Moderate)")] });
   assert.deepEqual(await followUp("pull_request", push, REPOS, open),
-    { pr: "8", repo: "xbmc/xbmc", comment: "", mode: "review", source: "push" });
+    [{ pr: "8", repo: "xbmc/xbmc", comment: "", mode: "review", source: "push" }]);
   const clean = lookup({ [path]: [summary("Merge after small fixes · 1 problem (Moderate)"),
     summary("Ready to merge")] });
   assert.equal(await followUp("pull_request", push, REPOS, clean), null);
@@ -204,11 +204,58 @@ test("a push after a summary with open problems asks for a recheck", async () =>
   assert.equal(await followUp("pull_request", { ...push, action: "opened" }, REPOS, open), null);
 });
 
+/** Return a skin check comment by the bot with the given verdict line. */
+function skinCheck(verdict) {
+  return { user: { login: "kodi-review[bot]" },
+    body: `<!-- kodi-review skin sha=${"a".repeat(40)} kdk=1 style=a -->\n**Skin check** · x\n\n`
+      + `${verdict}\n` };
+}
+
+test("a push while the newest skin check shows new errors asks for a skin recheck", async () => {
+  const push = { action: "synchronize", repository: { full_name: "xbmc/repo-skins" },
+    pull_request: { number: 9, state: "open" } };
+  const path = "/repos/xbmc/repo-skins/issues/9/comments?per_page=100&page=1";
+  const run = (mode) => ({ pr: "9", repo: "xbmc/repo-skins", comment: "", mode, source: "push" });
+  const repos = ["xbmc/repo-skins"];
+  for (const verdict of ["2 new errors and 3 new warnings.", "94 errors and 660 warnings.",
+    "1 error."]) {
+    assert.deepEqual(await followUp("pull_request", push, repos,
+      lookup({ [path]: [skinCheck(verdict)] })), [run("skin")], verdict);
+  }
+  for (const checks of [[skinCheck("No new problems.")], [skinCheck("4 new warnings.")],
+    [skinCheck("2 new errors."), skinCheck("No new problems.")]]) {
+    assert.equal(await followUp("pull_request", push, repos, lookup({ [path]: checks })), null);
+  }
+  const both = lookup({ [path]: [summary("Merge after small fixes · 1 problem (Moderate)"),
+    skinCheck("2 new errors.")] });
+  assert.deepEqual(await followUp("pull_request", push, repos, both),
+    [run("review"), run("skin")]);
+});
+
+test("a push sends one dispatch per run", async (t) => {
+  const calls = [];
+  const comments = [summary("Merge after small fixes · 1 problem (Moderate)"),
+    skinCheck("2 new errors.")];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push({ url, init });
+    return String(url).includes("/issues/8/comments")
+      ? new Response(JSON.stringify(comments), { status: 200 })
+      : new Response(null, { status: 204 });
+  });
+  const body = JSON.stringify({ action: "synchronize", repository: { full_name: "xbmc/xbmc" },
+    pull_request: { number: 8, state: "open" } });
+  const request = new Request("https://relay.example/github", { method: "POST", body,
+    headers: { "x-github-event": "pull_request", "x-hub-signature-256": sign(body) } });
+  assert.equal((await worker.fetch(request, ENV)).status, 202);
+  const dispatched = calls.filter((c) => /review\.yml\/dispatches/.test(c.url));
+  assert.deepEqual(dispatched.map((c) => JSON.parse(c.init.body).inputs.mode), ["review", "skin"]);
+});
+
 test("a member's reply in an open finding's thread asks for an answer", async () => {
   const finding = { user: { login: "kodi-review[bot]" }, body: "**Moderate: Leak**\n\nDetail." };
   const get = lookup({ "/repos/xbmc/xbmc/pulls/comments/4": finding });
-  assert.deepEqual(await followUp("pull_request_review_comment", threadReply(), REPOS, get),
-    { pr: "8", repo: "xbmc/xbmc", comment: "review/6", mode: "answer", source: "reply" });
+  assert.deepEqual(await followUp("pull_request_review_comment", threadReply(), REPOS, get), [
+    { pr: "8", repo: "xbmc/xbmc", comment: "review/6", mode: "answer", source: "reply" }]);
 });
 
 test("replies elsewhere, by strangers or bots, or to settled findings are ignored", async () => {

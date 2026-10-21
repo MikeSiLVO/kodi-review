@@ -16,6 +16,8 @@ const SKIN_REPO_MODES = new Set(["skin", "help"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
 const SUMMARY = /^<!-- kodi-review sha=/;
+const SKIN_CHECK = /^<!-- kodi-review skin /;
+const NEW_ERRORS = /^\d+ (?:new )?errors?\b/m;
 const OPEN_PROBLEMS = /^### [^\n]* · \d+ problems?\b/m;
 
 /** Verify GitHub's HMAC signature of the raw request body. */
@@ -55,28 +57,34 @@ export function trigger(event, payload, allowed, skinRepos = []) {
     mode: refused ? "refuse" : mode, source: onIssue ? "issue" : "mention" };
 }
 
-/** Return the bot's newest summary comment on a pull request, or null. */
-async function latestSummary(repo, number, get) {
-  let found = null;
+/** Return the bot's newest review summary and newest skin check on a pull request, null if none. */
+async function latestChecks(repo, number, get) {
+  const found = { summary: null, skin: null };
   for (let page = 1; page <= 5; page++) {
     const items = await get(`/repos/${repo}/issues/${number}/comments?per_page=100&page=${page}`);
     if (!Array.isArray(items)) return found;
-    for (const c of items) if (c.user?.login === BOT && SUMMARY.test(c.body || "")) found = c;
+    for (const c of items.filter((item) => item.user?.login === BOT)) {
+      if (SUMMARY.test(c.body || "")) found.summary = c;
+      if (SKIN_CHECK.test(c.body || "")) found.skin = c;
+    }
     if (items.length < 100) return found;
   }
   return found;
 }
 
-/** Return the inputs for a push after open findings or a reply in a finding's thread, or null. */
+/** Return the runs for a push after open findings or new skin errors, or a finding's reply. */
 export async function followUp(event, payload, allowed, get) {
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
   if (!allowed.includes(repo) || !pr || pr.state !== "open") return null;
   if (event === "pull_request") {
     if (payload.action !== "synchronize") return null;
-    const summary = await latestSummary(repo, pr.number, get);
-    return summary && OPEN_PROBLEMS.test(summary.body)
-      ? { pr: String(pr.number), repo, comment: "", mode: "review", source: "push" } : null;
+    const { summary, skin } = await latestChecks(repo, pr.number, get);
+    const runs = [];
+    if (summary && OPEN_PROBLEMS.test(summary.body)) runs.push("review");
+    if (skin && NEW_ERRORS.test(skin.body)) runs.push("skin");
+    return runs.length ? runs.map((mode) => ({ pr: String(pr.number), repo, comment: "", mode,
+      source: "push" })) : null;
   }
   const comment = payload.comment;
   if (event !== "pull_request_review_comment" || payload.action !== "created"
@@ -84,8 +92,8 @@ export async function followUp(event, payload, allowed, get) {
       || STRANGERS.has(comment.author_association)) return null;
   const parent = await get(`/repos/${repo}/pulls/comments/${comment.in_reply_to_id}`);
   return parent?.user?.login === BOT && FINDING.test(parent.body || "")
-    ? { pr: String(pr.number), repo, comment: `review/${comment.id}`, mode: "answer",
-      source: "reply" } : null;
+    ? [{ pr: String(pr.number), repo, comment: `review/${comment.id}`, mode: "answer",
+      source: "reply" }] : null;
 }
 
 /** Read a public GitHub API path as JSON, without the token if it is refused; null on failure. */
@@ -113,18 +121,20 @@ export default {
     const event = request.headers.get("x-github-event");
     const payload = JSON.parse(body);
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
-    const inputs = trigger(event, payload, allowed, (env.SKIN_REPOS || "").split(/\s+/))
-      ?? await followUp(event, payload, allowed, (path) => readGitHub(path, env.DISPATCH_TOKEN));
-    if (!inputs) return new Response("Ignored", { status: 202 });
-    const reply = await fetch(
+    const asked = trigger(event, payload, allowed, (env.SKIN_REPOS || "").split(/\s+/));
+    const runs = asked ? [asked]
+      : await followUp(event, payload, allowed, (path) => readGitHub(path, env.DISPATCH_TOKEN));
+    if (!runs) return new Response("Ignored", { status: 202 });
+    const replies = await Promise.all(runs.map((inputs) => fetch(
       `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/review.yml/dispatches`, {
         method: "POST",
         headers: { Authorization: `Bearer ${env.DISPATCH_TOKEN}`,
           Accept: "application/vnd.github+json", "User-Agent": "kodi-review-relay",
           "X-GitHub-Api-Version": "2022-11-28" },
         body: JSON.stringify({ ref: "main", inputs }),
-      });
-    return new Response(reply.ok ? "Dispatched" : `Dispatch failed: ${reply.status}`,
-      { status: reply.ok ? 202 : 502 });
+      })));
+    const failed = replies.find((reply) => !reply.ok);
+    return new Response(failed ? `Dispatch failed: ${failed.status}` : "Dispatched",
+      { status: failed ? 502 : 202 });
   },
 };

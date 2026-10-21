@@ -13,3 +13,4 @@ Start a comment with one of these:
 
 A reply under one of my findings needs no mention.
 While findings are open, each push gets a recheck.
+While my skin check shows new errors, each push gets a new one.

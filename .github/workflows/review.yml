@@ -423,7 +423,7 @@ jobs:
       BOT: .kodi-review-bot
     steps:
       - name: Wait for the trigger check
-        if: inputs.comment != ''
+        if: inputs.comment != '' || inputs.source == 'push'
         run: |
           jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
           for _ in $(seq 120); do
@@ -476,7 +476,7 @@ jobs:
     needs: [trigger, skin]
     if: >-
       ${{ !cancelled() && needs.skin.outputs.prepared == 'true'
-      && (inputs.comment == '' || needs.trigger.result == 'success') }}
+      && (inputs.comment == '' && inputs.source != 'push' || needs.trigger.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
