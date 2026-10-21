@@ -417,8 +417,8 @@ class RenderTests(unittest.TestCase):
                    ("Kodi Repo", "warning", "a.pdf", 0, "Kodi repo: a.pdf has a file ending",
                     {"rule": "repo.file-type"}), warnings=2)
         facts = self.facts(None, head)
-        rules = [{"id": "repo.no-screenshot", "addon_checker": None, "blocks_submission": True},
-                 {"id": "repo.file-type", "addon_checker": "warning", "blocks_submission": False}]
+        rules = [{"id": "repo.no-screenshot", "addon_checker": None, "blocking_warning": True},
+                 {"id": "repo.file-type", "addon_checker": "warning", "blocking_warning": False}]
         with mock.patch.object(skin, "kdk_rules", return_value=rules):
             skin.add_rules(facts, Path("unused"))
         self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})

@@ -525,7 +525,7 @@ def check_issue(scratch):
 
 
 def kdk_rules(scratch):
-    """Return kdk's rules with descriptions and which block a submission, or none if it fails."""
+    """Return kdk's rules with descriptions and blocking warnings marked, or none if it fails."""
     out = scratch / "rules"
     out.mkdir(parents=True, exist_ok=True)
     try:
@@ -550,10 +550,10 @@ def raise_failing(skin, rules):
 
 
 def add_rules(facts, scratch):
-    """Add kdk's rule descriptions and raise the submission blockers to errors."""
+    """Add kdk's rule descriptions and raise the blocking warnings to errors."""
     rules = kdk_rules(scratch)
     facts["rules"] = {r["id"]: r.get("description", "") for r in rules}
-    failing = {r["id"] for r in rules if r.get("blocks_submission")}
+    failing = {r["id"] for r in rules if r.get("blocking_warning")}
     for skin in facts.get("skins", []):
         raise_failing(skin, failing)
 
