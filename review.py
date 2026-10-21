@@ -1463,7 +1463,7 @@ def asks_again(body):
 
 
 def tell(key, text):
-    """Tell the asker why an ask runs nothing, or react 😕 when the thread already has that reply."""
+    """Tell the asker why an ask runs nothing, or react 😕 if the thread already has that reply."""
     kind, number = asking_comment()
     pr = os.environ["FORK_PR"]
     marker = f"<!-- kodi-review refused {key} -->"
