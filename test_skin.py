@@ -396,8 +396,8 @@ class RenderTests(unittest.TestCase):
                       text)
         self.assertIn("<details><summary><b>1 already there before 1.2.0</b></summary>", text)
 
-    def test_checker_failures_count_as_errors(self):
-        """A warning the add-on checker fails a pull request on becomes an error, with a note."""
+    def test_submission_blockers_count_as_errors(self):
+        """A warning that blocks a submission becomes an error, with a note."""
         head = run(("Kodi Repo", "warning", "addon.xml", 33, "Kodi repo: <news> is 8902 characters",
                     {"rule": "repo.schema"}),
                    ("Kodi Repo", "warning", "a.pdf", 0, "Kodi repo: a.pdf has a file ending",
@@ -405,10 +405,24 @@ class RenderTests(unittest.TestCase):
         facts = self.facts(None, head)
         skin.raise_failing(facts["skins"][0], {"repo.schema"})
         text = skin.skin_text(facts)
-        self.assertIn("1 error and 1 warning.\n\nKodi repo findings that fail the Kodi add-on "
-                      "checker count as errors.", text)
+        self.assertIn("1 error and 1 warning.\n\nKodi repo findings that block a submission "
+                      "count as errors.", text)
         self.assertIn("🔴 <b>1 error, 1 kind</b>", text)
         self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})
+
+    def test_kdk_marks_the_submission_blockers(self):
+        """Only the rules kdk says block a submission are raised, add-on checker ones or not."""
+        head = run(("Kodi Repo", "warning", "addon.xml", 20, "Kodi repo: no <screenshot>",
+                    {"rule": "repo.no-screenshot"}),
+                   ("Kodi Repo", "warning", "a.pdf", 0, "Kodi repo: a.pdf has a file ending",
+                    {"rule": "repo.file-type"}), warnings=2)
+        facts = self.facts(None, head)
+        rules = [{"id": "repo.no-screenshot", "addon_checker": None, "blocks_submission": True},
+                 {"id": "repo.file-type", "addon_checker": "warning", "blocks_submission": False}]
+        with mock.patch.object(skin, "kdk_rules", return_value=rules):
+            skin.add_rules(facts, Path("unused"))
+        self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})
+        self.assertEqual([r["severity"] for r in facts["skins"][0]["all"]], ["error", "warning"])
 
     def test_clean_update(self):
         """An update adding nothing says so and folds only what was already there."""

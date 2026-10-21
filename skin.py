@@ -525,7 +525,7 @@ def check_issue(scratch):
 
 
 def kdk_rules(scratch):
-    """Return kdk's rules with their descriptions and add-on checker levels, or none if it fails."""
+    """Return kdk's rules with descriptions and which block a submission, or none if it fails."""
     out = scratch / "rules"
     out.mkdir(parents=True, exist_ok=True)
     try:
@@ -537,7 +537,7 @@ def kdk_rules(scratch):
 
 
 def raise_failing(skin, rules):
-    """Raise warnings of rules the Kodi add-on checker fails a pull request on to errors."""
+    """Raise warnings of rules that block a Kodi repo submission to errors."""
     moved = sum(r["rule"] in rules and r["severity"] == "warning" and not r["muted"]
                 for r in skin["all"])
     skin["head"]["errors"] += moved
@@ -550,10 +550,10 @@ def raise_failing(skin, rules):
 
 
 def add_rules(facts, scratch):
-    """Add kdk's rule descriptions and raise the checker's failures to errors."""
+    """Add kdk's rule descriptions and raise the submission blockers to errors."""
     rules = kdk_rules(scratch)
     facts["rules"] = {r["id"]: r.get("description", "") for r in rules}
-    failing = {r["id"] for r in rules if r.get("addon_checker") == "problem"}
+    failing = {r["id"] for r in rules if r.get("blocks_submission")}
     for skin in facts.get("skins", []):
         raise_failing(skin, failing)
 
@@ -791,7 +791,7 @@ def skin_body(skin, rules, rows_shown, bare):
     parts = [f"**Skin check** · {code(skin['id'])} {plain(skin['version'])}{compared} · {against}",
              verdict(skin, new, muted, fixed, sum(n for _, n, _ in there))]
     if skin.get("raised"):
-        parts.append("Kodi repo findings that fail the Kodi add-on checker count as errors.")
+        parts.append("Kodi repo findings that block a submission count as errors.")
     parts += [f"> {nice(notice)}" for notice in skin["notices"]]
     for severity in ("error", "warning"):
         if part := severity_section(kinds, severity, rules, skin["new_skin"], rows_shown, bare):
