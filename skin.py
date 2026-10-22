@@ -721,12 +721,16 @@ def fold(summary, body, opened=False, indent=False):
     return f"<details{attr}><summary>{summary}</summary>\n\n{body}\n\n</details>"
 
 
-def kind_fold(kind, rows, rules, rows_shown, table):
-    """Format one kind of problem as a fold: example and finding table, or the example alone."""
+def kind_fold(kind, rows, rules, rows_shown, table, muted=False):
+    """Format a kind's example and any table as a fold, with a muted kind's severity and reasons."""
     files = spread(rows)
-    summary = (f"<b>{plain(kind[0])}</b> · {plain(problem_name(kind, rows, rules))} "
+    severity = f"{SEVERITY_WORDS.get(kind[2], kind[2])} · " if muted else ""
+    summary = (f"{severity}<b>{plain(kind[0])}</b> · {plain(problem_name(kind, rows, rules))} "
                f"<code>{count(rows)}</code> in {plural(files, 'file')}")
     body = example(kind, rows)
+    if muted:
+        reasons = sorted({r["reason"] for r in rows})
+        body = f"Muted as {', '.join(code(r) for r in reasons)}.\n\n{body}"
     if table:
         body += "\n\n" + finding_table(kind, rows, rows_shown)
     return fold(summary, body)
@@ -742,6 +746,14 @@ def severity_section(kinds, severity, rules, new_skin, rows_shown, bare):
              f"{plural(len(members), 'kind')}</b>")
     inner = "\n".join(kind_fold(k, rows, rules, rows_shown, k not in bare) for k, rows in members)
     return fold(title, inner, opened=severity == "error", indent=True)
+
+
+def muted_section(kinds, rules, rows_shown, bare):
+    """Format the kinds the skin muted as a closed indented fold under their count."""
+    total = sum(count(rows) for _, rows in kinds)
+    inner = "\n".join(kind_fold(k, rows, rules, rows_shown, ("muted", *k) not in bare, True)
+                      for k, rows in kinds)
+    return fold(f"<b>{total} muted by the skin</b>", inner, indent=True)
 
 
 def digest(kinds, rules):
@@ -778,7 +790,7 @@ def verdict(skin, new, muted, fixed, there):
 
 
 def skin_body(skin, rules, rows_shown, bare):
-    """Format one skin's part of the comment with some kinds' tables left out; return its kinds."""
+    """Format one skin's part, some tables left out; return it with its new and muted kinds."""
     new = [r for r in skin["rows"] if r["status"] == "new"]
     muted = [r for r in skin["rows"] if r["status"] == "muted"]
     fixed = [r for r in skin["rows"] if r["status"] == "fixed" and not r["muted"]]
@@ -787,7 +799,7 @@ def skin_body(skin, rules, rows_shown, bare):
     against = RELEASE_NAMES.get(skin["release"], skin["release"])
     compared = (", a new skin" if skin["new_skin"]
                 else f" against the version on {plain(skin.get('branch') or 'the base')}")
-    kinds = problems(new)
+    kinds, muted_kinds = problems(new), problems(muted)
     parts = [f"**Skin check** · {code(skin['id'])} {plain(skin['version'])}{compared} · {against}",
              verdict(skin, new, muted, fixed, sum(n for _, n, _ in there))]
     if skin.get("raised"):
@@ -800,27 +812,28 @@ def skin_body(skin, rules, rows_shown, bare):
         parts.append(fold(f"{SECTION_ICONS['fixed']} <b>{count(fixed)} fixed</b>",
                           digest(digest_of(fixed), rules)))
     if muted:
-        parts.append(fold(f"<b>{count(muted)} muted by the skin</b>",
-                          digest(digest_of(muted), rules)))
+        parts.append(muted_section(muted_kinds, rules, rows_shown, bare))
     if there:
         total = sum(n for _, n, _ in there)
         parts.append(fold(f"<b>{total} already there before {plain(skin['version'])}</b>",
                           digest(there, rules)))
-    return "\n\n".join(parts), kinds
+    return "\n\n".join(parts), kinds, muted_kinds
 
 
 def skin_part(skin, rules, room, run):
-    """Format one skin within its room, cutting rows, then tables, warnings and smallest first."""
-    text, kinds = skin_body(skin, rules, None, set())
+    """Format one skin within its room, cutting rows, then tables: muted, warnings, small first."""
+    text, kinds, muted = skin_body(skin, rules, None, set())
     if len(text) <= room:
         return text
-    text, _ = skin_body(skin, rules, ROWS_SHOWN, set())
+    text, _, _ = skin_body(skin, rules, ROWS_SHOWN, set())
+    order = [("muted", *k) for k, _ in sorted(muted, key=lambda k: count(k[1]))]
+    order += [k for k, _ in sorted(kinds, key=lambda k: (k[0][2] == "error", count(k[1])))]
     bare = set()
-    for kind, _ in sorted(kinds, key=lambda k: (k[0][2] == "error", count(k[1]))):
+    for kind in order:
         if len(text) <= room - 200:
             break
         bare.add(kind)
-        text, _ = skin_body(skin, rules, ROWS_SHOWN, bare)
+        text, _, _ = skin_body(skin, rules, ROWS_SHOWN, bare)
     note = (f"Some places are left out to fit a comment; the [run's summary]({run}) lists every "
             "finding.")
     head, _, rest = text.partition("\n\n")

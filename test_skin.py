@@ -490,13 +490,28 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("@xbmc", outside)
 
     def test_muted_findings_fold_with_their_reason(self):
-        """A finding the skin muted is counted apart and listed with the skin's reason."""
+        """A muted finding is counted apart and listed in full under its severity and reason."""
         head = run(("Labels", "warning", "xml/a.xml", 3, "Not translated",
                     {"muted": {"line": 2, "reason": "theme name"}}))
         text = skin.skin_text(self.facts(run(), head))
         self.assertIn("No new problems. 1 muted by the skin.", text)
-        self.assertIn("<details><summary><b>1 muted by the skin</b></summary>", text)
-        self.assertIn("<code>1</code>, muted as `theme name`", text)
+        self.assertIn("<details><summary><b>1 muted by the skin</b></summary>\n\n<dl><dd>", text)
+        self.assertIn("<summary>Warning · <b>Labels</b> · ", text)
+        self.assertIn("Muted as `theme name`.\n\n`labels.test` · for example `xml/a.xml` line 3",
+                      text)
+        self.assertIn("| `Not translated` | 1 | `xml/a.xml` 3 |", text)
+
+    def test_overflow_cuts_muted_tables_first(self):
+        """Past the room, muted kinds lose their tables before any new warning or error does."""
+        head = run(*[("Fonts", "warning", "xml/Font.xml", n, f"Unused font: f{n}",
+                      {"muted": {"line": n, "reason": "kept"}}) for n in range(1, 80)],
+                   ("IDs", "error", "xml/a.xml", 1, "Control ID 1 not defined"), errors=1)
+        whole = skin.skin_text(self.facts(None, head))
+        with mock.patch.object(skin, "COMMENT_LIMIT", len(whole) - 500):
+            text = skin.skin_text(self.facts(None, head))
+        self.assertNotIn("| `Unused font: f79` |", text)
+        self.assertIn("| `Unused font: f79` |", whole)
+        self.assertIn("| `Control ID 1 not defined` | 1 | `xml/a.xml` 1 |", text)
 
     def test_overflow_keeps_the_largest_findings_first(self):
         """Past the room, a table keeps its largest findings and counts the rest in one row."""
