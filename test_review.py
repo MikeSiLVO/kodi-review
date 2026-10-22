@@ -1,5 +1,6 @@
 """Offline tests for the review helpers: patch comparison, label rules, Where it stands block."""
 
+import io
 import json
 import os
 import re
@@ -1187,18 +1188,31 @@ class TriggerTests(unittest.TestCase):
         self.assertIn("a reply needs write access", str(code))
         self.assertNotIn("POST", [method for method, _ in calls])
 
-    def test_relay_refusals_are_told_why(self):
-        """A refused ask says the thread is closed, not a pull request, or needs write access."""
+    def test_relay_refusals_pass_once_told_why(self):
+        """A relay refusal passes once told: closed, not a pull request, or no write access."""
         cases = (({"state": "closed", "pull_request": {}}, "write", "This is closed"),
                  ({"state": "open"}, "write", "I only run on pull requests"),
                  ({"state": "open", "pull_request": {}}, "none", "Reviews need write access"))
         for thread, access, reason in cases:
-            calls, code = self.run_trigger(self.comment(), access, mode="refuse", thread=thread)
-            self.assertIn(reason, str(code))
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                calls, code = self.run_trigger(self.comment(), access, mode="refuse", thread=thread)
+            self.assertEqual(code, 0)
+            self.assertIn(reason, out.getvalue())
             self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/7/comments"))
+
+    def test_relay_refusal_with_nothing_to_refuse_fails(self):
+        """A relay refusal fails, telling no one, when the trigger finds nothing to refuse."""
         calls, code = self.run_trigger(self.comment(), mode="refuse")
         self.assertIn("finds nothing to refuse", str(code))
         self.assertNotIn("POST", [method for method, _ in calls])
+
+    def test_relay_refusal_not_told_fails(self):
+        """A relay refusal whose reason could not be posted fails the run."""
+        with mock.patch.object(review, "tell", side_effect=urllib.error.URLError("down")):
+            _, code = self.run_trigger(self.comment(), mode="refuse",
+                                       thread={"state": "closed", "pull_request": {}})
+        self.assertIn("Could not tell the asker", str(code))
+        self.assertIn("This is closed", str(code))
 
     def test_tell_quotes_the_ask_or_replies_in_its_thread(self):
         """The reason replies inline, or in the conversation under the ask's unlinked first line."""

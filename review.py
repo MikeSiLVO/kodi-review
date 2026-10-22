@@ -1496,16 +1496,19 @@ def tell(key, text):
 
 
 def refuse(key, text):
-    """Tell the asker why the ask runs nothing, then exit 1 with that reason."""
+    """Tell the asker why the ask runs nothing, then exit 1, or 0 once told of a relay refusal."""
     try:
         tell(key, text)
     except urllib.error.URLError as err:
-        print(f"Could not tell the asker: {err}")
+        sys.exit(f"Could not tell the asker: {err}\n{text}")
+    if os.environ.get("MODE") == "refuse":
+        print(text)
+        sys.exit(0)
     sys.exit(text)
 
 
 def cmd_trigger():
-    """Exit 1 unless a due push or allowed ask; tell a refused mention why, react if not help."""
+    """Exit 1 unless allowed; tell refused mentions why, 0 if relay; react to non-help mentions."""
     if os.environ.get("SOURCE") == "push":
         if os.environ.get("MODE") == "skin":
             check_skin_recheck()
