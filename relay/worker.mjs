@@ -17,7 +17,6 @@ const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
 const SUMMARY = /^<!-- kodi-review sha=/;
 const SKIN_CHECK = /^<!-- kodi-review skin /;
-const NEW_ERRORS = /^\d+ (?:new )?errors?\b/m;
 const OPEN_PROBLEMS = /^### [^\n]* · \d+ problems?\b/m;
 
 /** Verify GitHub's HMAC signature of the raw request body. */
@@ -72,7 +71,7 @@ async function latestChecks(repo, number, get) {
   return found;
 }
 
-/** Return the runs for a push after open findings or new skin errors, or a finding's reply. */
+/** Return the runs for a push after open findings or a skin check, or a finding's reply. */
 export async function followUp(event, payload, allowed, get) {
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
@@ -82,7 +81,7 @@ export async function followUp(event, payload, allowed, get) {
     const { summary, skin } = await latestChecks(repo, pr.number, get);
     const runs = [];
     if (summary && OPEN_PROBLEMS.test(summary.body)) runs.push("review");
-    if (skin && NEW_ERRORS.test(skin.body)) runs.push("skin");
+    if (skin) runs.push("skin");
     return runs.length ? runs.map((mode) => ({ pr: String(pr.number), repo, comment: "", mode,
       source: "push" })) : null;
   }

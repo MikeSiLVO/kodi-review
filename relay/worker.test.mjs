@@ -211,21 +211,18 @@ function skinCheck(verdict) {
       + `${verdict}\n` };
 }
 
-test("a push while the newest skin check shows new errors asks for a skin recheck", async () => {
+test("a push to a pull request with a skin check asks for a skin recheck", async () => {
   const push = { action: "synchronize", repository: { full_name: "xbmc/repo-skins" },
     pull_request: { number: 9, state: "open" } };
   const path = "/repos/xbmc/repo-skins/issues/9/comments?per_page=100&page=1";
   const run = (mode) => ({ pr: "9", repo: "xbmc/repo-skins", comment: "", mode, source: "push" });
   const repos = ["xbmc/repo-skins"];
-  for (const verdict of ["2 new errors and 3 new warnings.", "94 errors and 660 warnings.",
-    "1 error."]) {
+  for (const verdict of ["2 new errors and 3 new warnings.", "No new problems.",
+    "4 new warnings."]) {
     assert.deepEqual(await followUp("pull_request", push, repos,
       lookup({ [path]: [skinCheck(verdict)] })), [run("skin")], verdict);
   }
-  for (const checks of [[skinCheck("No new problems.")], [skinCheck("4 new warnings.")],
-    [skinCheck("2 new errors."), skinCheck("No new problems.")]]) {
-    assert.equal(await followUp("pull_request", push, repos, lookup({ [path]: checks })), null);
-  }
+  assert.equal(await followUp("pull_request", push, repos, lookup({ [path]: [] })), null);
   const both = lookup({ [path]: [summary("Merge after small fixes · 1 problem (Moderate)"),
     skinCheck("2 new errors.")] });
   assert.deepEqual(await followUp("pull_request", push, repos, both),

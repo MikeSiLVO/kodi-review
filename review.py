@@ -23,7 +23,6 @@ RUN_DIR = Path(".kodi-review-run")
 MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
 SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+)(.*?) -->")
-NEW_ERRORS = re.compile(r"^\d+ (?:new )?errors?\b", re.M)
 SKIN_REPOS = ("xbmc/repo-skins", "MikeSiLVO/repo-skins")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
@@ -1432,10 +1431,10 @@ def check_recheck():
 
 
 def check_skin_recheck():
-    """Check a push may recheck skins: exit 1 unless the last check is stale and has new errors."""
+    """Check a push may recheck skins: exit 1 unless there is a skin check and the last is stale."""
     checks = skin_comments()
-    if not checks or not NEW_ERRORS.search(checks[-1]["body"] or ""):
-        sys.exit("No skin check with new errors here, so a push needs no recheck.")
+    if not checks:
+        sys.exit("No skin check here, so a push needs no recheck.")
     head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
     marker = SKIN_MARKER.match(checks[-1]["body"])
     if marker and marker[2] == head and marker[3].strip() == skin_build():
