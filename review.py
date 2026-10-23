@@ -1431,12 +1431,12 @@ def check_recheck():
 
 
 def check_skin_recheck():
-    """Check a push may recheck skins: exit 1 unless there is a skin check and the last is stale."""
+    """Check a push may recheck skins: exit 1 on a current check, or on none outside skin repos."""
     checks = skin_comments()
-    if not checks:
+    if not checks and REPO not in SKIN_REPOS:
         sys.exit("No skin check here, so a push needs no recheck.")
     head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
-    marker = SKIN_MARKER.match(checks[-1]["body"])
+    marker = SKIN_MARKER.match(checks[-1]["body"]) if checks else None
     if marker and marker[2] == head and marker[3].strip() == skin_build():
         sys.exit(f"The skin check of {head[:12]} is already posted.")
 

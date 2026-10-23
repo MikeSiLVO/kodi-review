@@ -7,4 +7,4 @@ Start a comment with one of these:
 - `@kodi-review help`: this list.
 
 Anyone can ask. A skin already checked at the same commit is checked again only after my checks
-are updated. Once a pull request has my check, each push gets a new one.
+are updated. Each pull request gets my check when it opens and after each push.

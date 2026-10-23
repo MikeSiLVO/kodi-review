@@ -212,21 +212,53 @@ function skinCheck(verdict) {
 }
 
 test("a push to a pull request with a skin check asks for a skin recheck", async () => {
-  const push = { action: "synchronize", repository: { full_name: "xbmc/repo-skins" },
+  const push = { action: "synchronize", repository: { full_name: "xbmc/xbmc" },
     pull_request: { number: 9, state: "open" } };
-  const path = "/repos/xbmc/repo-skins/issues/9/comments?per_page=100&page=1";
-  const run = (mode) => ({ pr: "9", repo: "xbmc/repo-skins", comment: "", mode, source: "push" });
-  const repos = ["xbmc/repo-skins"];
+  const path = "/repos/xbmc/xbmc/issues/9/comments?per_page=100&page=1";
+  const run = (mode) => ({ pr: "9", repo: "xbmc/xbmc", comment: "", mode, source: "push" });
   for (const verdict of ["2 new errors and 3 new warnings.", "No new problems.",
     "4 new warnings."]) {
-    assert.deepEqual(await followUp("pull_request", push, repos,
+    assert.deepEqual(await followUp("pull_request", push, REPOS,
       lookup({ [path]: [skinCheck(verdict)] })), [run("skin")], verdict);
   }
-  assert.equal(await followUp("pull_request", push, repos, lookup({ [path]: [] })), null);
+  assert.equal(await followUp("pull_request", push, REPOS, lookup({ [path]: [] })), null);
   const both = lookup({ [path]: [summary("Merge after small fixes · 1 problem (Moderate)"),
     skinCheck("2 new errors.")] });
-  assert.deepEqual(await followUp("pull_request", push, repos, both),
+  assert.deepEqual(await followUp("pull_request", push, REPOS, both),
     [run("review"), run("skin")]);
+});
+
+test("a skin repo pull request asks for a skin check when opened, reopened or pushed", async () => {
+  const repos = ["xbmc/repo-skins"];
+  const payload = (action, state = "open") => ({ action,
+    repository: { full_name: "xbmc/repo-skins" }, pull_request: { number: 9, state } });
+  const none = lookup({});
+  for (const action of ["opened", "reopened", "synchronize"]) {
+    assert.deepEqual(await followUp("pull_request", payload(action), repos, none, repos),
+      [{ pr: "9", repo: "xbmc/repo-skins", comment: "", mode: "skin", source: "push" }], action);
+  }
+  for (const action of ["edited", "labeled", "closed"]) {
+    assert.equal(await followUp("pull_request", payload(action), repos, none, repos), null, action);
+  }
+  assert.equal(await followUp("pull_request", payload("synchronize", "closed"), repos, none,
+    repos), null);
+  assert.equal(await followUp("pull_request", payload("opened"), repos, none), null);
+});
+
+test("a skin repo pull request opening dispatches a skin check", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  });
+  const env = { ...ENV, ALLOWED_REPOS: "xbmc/repo-skins", SKIN_REPOS: "xbmc/repo-skins" };
+  const body = JSON.stringify({ action: "opened", repository: { full_name: "xbmc/repo-skins" },
+    pull_request: { number: 9, state: "open" } });
+  const request = new Request("https://relay.example/github", { method: "POST", body,
+    headers: { "x-github-event": "pull_request", "x-hub-signature-256": sign(body) } });
+  assert.equal((await worker.fetch(request, env)).status, 202);
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0].init.body).inputs.mode, "skin");
 });
 
 test("a push sends one dispatch per run", async (t) => {

@@ -59,6 +59,10 @@ class SkinError(Exception):
     """A reason the skin check cannot go on, worded to follow "not checked," in the comment."""
 
 
+class OutOfScope(SkinError):
+    """A reason the pull request is not one to check, posted only when someone asked."""
+
+
 def asked_source(text):
     """Return the first link in the text and the revision after it, or None without a link."""
     match = LINK.search(text)
@@ -377,7 +381,7 @@ def pull_request():
     pr = os.environ["FORK_PR"]
     meta = request("GET", f"/repos/{REPO}/pulls/{pr}")
     if meta["state"] != "open":
-        raise SkinError("the pull request is closed")
+        raise OutOfScope("the pull request is closed")
     head = meta["head"]["sha"]
     base = request("GET", f"/repos/{REPO}/compare/{meta['base']['ref']}...{head}")
     files = [f["filename"] for f in paged(f"/repos/{REPO}/pulls/{pr}/files")]
@@ -433,11 +437,11 @@ def check_skins_pr(scratch):
     """Check the skin folders a repo-skins pull request changes, against its release branch."""
     head, base, branch, files = pull_request()
     if branch not in RELEASE_NAMES:
-        raise SkinError(f"the pull request targets {branch}; the skin check covers "
-                        + " and ".join(RELEASE_NAMES))
+        raise OutOfScope(f"the pull request targets {branch}; the skin check covers "
+                         + " and ".join(RELEASE_NAMES))
     skins = sorted({f.split("/")[0] for f in files if f.startswith("skin.") and "/" in f})
     if not skins:
-        raise SkinError("the pull request changes no skin folder")
+        raise OutOfScope("the pull request changes no skin folder")
     results, folders = [], []
     for skin in skins[:SKIN_LIMIT]:
         head_tree, base_tree = scratch / "head" / skin, scratch / "base" / skin
@@ -566,7 +570,7 @@ def run_link():
 
 
 def cmd_check():
-    """Check the asked-for skin; write skin.json for the post job and the report to the summary."""
+    """Check the run's skin; write skin.json for the post job and the report to the summary."""
     scratch = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "skin"
     RUN_DIR.mkdir(exist_ok=True)
     facts: dict[str, Any]
@@ -585,7 +589,8 @@ def cmd_check():
             ET.ParseError, KeyError, ValueError) as err:
         print(f"Skin check failed: {err!r}")
         reason = str(err) if isinstance(err, SkinError) else "the check failed"
-        facts = {"key": f"run={os.environ.get('GITHUB_RUN_ID', '')}", "error": reason}
+        facts = {"key": f"run={os.environ.get('GITHUB_RUN_ID', '')}", "error": reason,
+                 "quiet": isinstance(err, OutOfScope) and os.environ.get("SOURCE") == "push"}
     facts["run"] = run_link()
     report = report_text(facts)
     for skin in facts.get("skins", []):
@@ -920,8 +925,11 @@ def cmd_render():
 
 
 def cmd_post():
-    """Post the skin check and hide earlier ones, or say why not; exit 1 on a credential."""
+    """Post the skin check and hide earlier ones, or why not if owed; exit 1 on a credential."""
     facts = load_facts()
+    if facts.get("quiet"):
+        print(f"Not posting: {facts['error']}")
+        return
     if "skip" in facts:
         print(f"Not posting: {facts['skip']}")
         tell(f"skin {facts['key']} {skin_build()}",

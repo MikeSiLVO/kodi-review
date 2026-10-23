@@ -79,9 +79,10 @@ new. Past GitHub's comment size, each table keeps its 25 largest findings, then 
 ones first, then warnings, smallest first, and the run's summary page lists every finding.
 Anyone can ask, since no model runs. A commit or link already checked is checked again only after
 the bot's checks are updated; `again` on the asking line, before or after the link, checks it
-anyway and needs write access. Once a pull request has a skin check, each push gets a new one.
-Each new check hides the last one. Omega and Piers skins are checked; master counts as Piers
-while their xbmc.gui versions match.
+anyway and needs write access. A repo-skins pull request is checked when it opens and after each
+push without anyone asking, and gets no comment when the check doesn't cover it. Elsewhere, once a
+pull request has a skin check, each push gets a new one. Each new check hides the last one.
+Omega and Piers skins are checked; master counts as Piers while their xbmc.gui versions match.
 
 ## Files
 

@@ -1691,6 +1691,22 @@ class FollowUpTests(unittest.TestCase):
                 else:
                     review.cmd_trigger()
 
+    def test_skin_repo_push_checks_without_an_earlier_check(self):
+        """A skin repo push or opening checks with no skin check yet and stops on a current one."""
+        current = {"body": f"<!-- kodi-review skin sha={'a' * 40} kdk=1 style=a -->\nx"}
+        head = {"head": {"sha": "a" * 40}}
+        for checks, stops in [([], False), ([current], True)]:
+            with mock.patch.object(review, "REPO", "xbmc/repo-skins"), \
+                    mock.patch.object(review, "skin_comments", return_value=checks), \
+                    mock.patch.object(review, "skin_build", return_value="kdk=1 style=a"), \
+                    mock.patch.object(review, "request", return_value=head), \
+                    mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "skin",
+                                                 "FORK_PR": "7"}):
+                if stops:
+                    self.assertRaises(SystemExit, review.cmd_trigger)
+                else:
+                    review.cmd_trigger()
+
     def test_reply_needs_an_open_finding_above_it_and_gets_no_reaction(self):
         """A writer's reply to the bot's open finding starts a run; other replies do not."""
         reply = {"body": "Agreed.", "in_reply_to_id": 4, "user": {"login": "dev"},

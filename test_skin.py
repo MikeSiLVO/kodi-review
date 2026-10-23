@@ -590,6 +590,27 @@ class PostTests(unittest.TestCase):
                 "skin source=k kdk=1 style=a",
                 "Already checked `o/r@1`, and my checks haven't changed since.")
 
+    def test_out_of_scope_posts_only_when_asked(self):
+        """A pull request the check doesn't cover gets a reason when asked, nothing on a push."""
+        env = {"UPSTREAM": "xbmc/repo-skins", "ALLOWED_REPOS": "xbmc/repo-skins", "FORK_PR": "7"}
+        scope = skin.OutOfScope("the pull request targets nexus")
+        for source, posts in [("mention", True), ("push", False)]:
+            with tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(skin, "RUN_DIR", Path(tmp)), \
+                    mock.patch.dict(os.environ, {**env, "SOURCE": source}), \
+                    mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}), \
+                    mock.patch.object(skin, "check_sandbox"), \
+                    mock.patch.object(skin, "check_skins_pr", side_effect=scope), \
+                    mock.patch.object(skin, "skin_comments", return_value=[]), \
+                    mock.patch.object(skin, "skin_build", return_value="kdk=1 style=a"), \
+                    mock.patch.object(skin, "request") as req:
+                skin.cmd_check()
+                skin.cmd_post()
+            self.assertEqual(req.called, posts, source)
+            if posts:
+                self.assertIn("not checked: the pull request targets nexus.",
+                              req.call_args.args[2]["body"])
+
 
 class SandboxTests(unittest.TestCase):
     """The bubblewrap command kdk runs under."""

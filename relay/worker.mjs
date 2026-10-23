@@ -13,6 +13,7 @@ export function spoken(body) {
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
 const OPEN_MODES = new Set(["format", "skin", "help"]);
 const SKIN_REPO_MODES = new Set(["skin", "help"]);
+const SKIN_ACTIONS = new Set(["opened", "reopened", "synchronize"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
 const SUMMARY = /^<!-- kodi-review sha=/;
@@ -71,19 +72,20 @@ async function latestChecks(repo, number, get) {
   return found;
 }
 
-/** Return the runs for a push after open findings or a skin check, or a finding's reply. */
-export async function followUp(event, payload, allowed, get) {
+/** Return the runs for a pull request opening or push, or a finding's reply. */
+export async function followUp(event, payload, allowed, get, skinRepos = []) {
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
   if (!allowed.includes(repo) || !pr || pr.state !== "open") return null;
   if (event === "pull_request") {
+    const run = (mode) => ({ pr: String(pr.number), repo, comment: "", mode, source: "push" });
+    if (skinRepos.includes(repo)) return SKIN_ACTIONS.has(payload.action) ? [run("skin")] : null;
     if (payload.action !== "synchronize") return null;
     const { summary, skin } = await latestChecks(repo, pr.number, get);
     const runs = [];
     if (summary && OPEN_PROBLEMS.test(summary.body)) runs.push("review");
     if (skin) runs.push("skin");
-    return runs.length ? runs.map((mode) => ({ pr: String(pr.number), repo, comment: "", mode,
-      source: "push" })) : null;
+    return runs.length ? runs.map(run) : null;
   }
   const comment = payload.comment;
   if (event !== "pull_request_review_comment" || payload.action !== "created"
@@ -108,7 +110,7 @@ async function readGitHub(path, token) {
 }
 
 export default {
-  /** Handle a fetch event: dispatch review.yml for a signed mention, reply or push, or decline. */
+  /** Handle a fetch: dispatch runs for a signed mention, reply, opening or push, or decline. */
   async fetch(request, env) {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/github") {
       return new Response("Not found", { status: 404 });
@@ -120,9 +122,10 @@ export default {
     const event = request.headers.get("x-github-event");
     const payload = JSON.parse(body);
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
-    const asked = trigger(event, payload, allowed, (env.SKIN_REPOS || "").split(/\s+/));
-    const runs = asked ? [asked]
-      : await followUp(event, payload, allowed, (path) => readGitHub(path, env.DISPATCH_TOKEN));
+    const skinRepos = (env.SKIN_REPOS || "").split(/\s+/);
+    const asked = trigger(event, payload, allowed, skinRepos);
+    const runs = asked ? [asked] : await followUp(event, payload, allowed,
+      (path) => readGitHub(path, env.DISPATCH_TOKEN), skinRepos);
     if (!runs) return new Response("Ignored", { status: 202 });
     const replies = await Promise.all(runs.map((inputs) => fetch(
       `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/review.yml/dispatches`, {

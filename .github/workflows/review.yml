@@ -36,7 +36,7 @@ on:
         required: false
         type: string
       source:
-        description: "Set by the relay: mention, reply (in a finding's thread), push, or issue (a skin or help ask on an issue)"
+        description: "Set by the relay: mention, reply (in a finding's thread), push (or a skin repo pull request opening), or issue (a skin or help ask on an issue)"
         required: false
         type: string
 
