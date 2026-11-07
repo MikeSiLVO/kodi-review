@@ -27,6 +27,10 @@ on:
         required: false
         type: boolean
         default: false
+      candidates_run:
+        description: "Blind replay: run only the verifier, on the candidates this run saved"
+        required: false
+        type: string
       comment:
         description: "Comment that asked for the review, as issue/ID or review/ID"
         required: false
@@ -54,6 +58,7 @@ env:
   UPSTREAM_PR: ${{ inputs.pr }}
   FORK_PR: ${{ inputs.pr }}
   REPLAY_SHA: ${{ inputs.sha }}
+  CANDIDATES_RUN: ${{ inputs.candidates_run }}
   COMMENT: ${{ inputs.comment }}
   MODE: ${{ inputs.mode || 'review' }}
   SOURCE: ${{ inputs.source }}
@@ -239,8 +244,9 @@ jobs:
             cat "$BOT/VERIFY.md" "$BOT/REVIEW.md" > "$RUNNER_TEMP/verify.md"
             echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
             echo "inputs_schema=$(jq -c . "$BOT/inputs.json")" >> "$GITHUB_OUTPUT"
-            echo "verify_schema=$(jq -c '{type, additionalProperties, required: ["findings"],
-              properties: {findings: .properties.findings}}' "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
+            echo "verify_schema=$(jq -c --slurpfile dropped "$BOT/verify.json" '{type,
+              additionalProperties, required: ["findings", "dropped"], properties: {findings:
+              .properties.findings, dropped: $dropped[0]}}' "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
             echo "task=Review" >> "$GITHUB_OUTPUT"
           fi
           find .kodi-review-run -mindepth 1 -empty ! -name new.diff -delete
@@ -282,7 +288,7 @@ jobs:
 
       - name: Review
         id: claude
-        if: env.MODE != 'format'
+        if: env.MODE != 'format' && env.CANDIDATES_RUN == ''
         uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -322,9 +328,22 @@ jobs:
 
       - name: Keep the result for the post job
         if: always() && steps.prep.outcome == 'success' && env.MODE != 'format'
+          && env.CANDIDATES_RUN == ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: python3 "$BOT/review.py" keep "$EXECUTION_FILE"
+
+      - name: Load the saved review and candidates
+        id: saved
+        if: env.MODE == 'review' && env.CANDIDATES_RUN != '' && env.REPLAY_SHA != ''
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATES_RUN" =~ ^[0-9]+$ ]] || { echo "Not a run id: $CANDIDATES_RUN"; exit 1; }
+          gh run download "$CANDIDATES_RUN" --repo "$GITHUB_REPOSITORY" -n review \
+            -D "$RUNNER_TEMP/saved"
+          cp "$RUNNER_TEMP/saved/result.json" "$RUNNER_TEMP/saved/candidates.json" .kodi-review-run/
+          count=$(jq '.candidates | length' .kodi-review-run/candidates.json 2>/dev/null || echo 0)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
 
       - name: List and trace inputs
         id: inputs
@@ -377,7 +396,9 @@ jobs:
 
       - name: Verify the input candidates
         id: verify
-        if: steps.candidates.outputs.count != '' && steps.candidates.outputs.count != '0'
+        if: >-
+          (steps.candidates.outputs.count || steps.saved.outputs.count) != ''
+          && (steps.candidates.outputs.count || steps.saved.outputs.count) != '0'
         uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
@@ -398,7 +419,7 @@ jobs:
             ${{ steps.prep.outputs.preload }}
           claude_args: |
             --model claude-opus-5-5
-            --effort high
+            --effort ${{ inputs.effort || 'xhigh' }}
             --append-system-prompt-file ${{ runner.temp }}/verify.md
             --permission-mode dontAsk
             --exclude-dynamic-system-prompt-sections

@@ -1,0 +1,15 @@
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["candidate", "reason", "evidence"],
+    "properties": {
+      "candidate": {"type": "string"},
+      "reason": {"type": "string",
+                 "enum": ["duplicate", "contradicted", "unproven", "wanted", "unreachable",
+                          "not new", "rule"]},
+      "evidence": {"type": "string"}
+    }
+  }
+}
