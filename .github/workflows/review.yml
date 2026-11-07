@@ -139,16 +139,22 @@ jobs:
           [[ " $ALLOWED_REPOS " == *" $UPSTREAM "* ]] \
             || { echo "Not an allowed repo: $UPSTREAM"; exit 1; }
           meta=$(gh api "repos/$UPSTREAM/pulls/$UPSTREAM_PR")
-          [[ "$(jq -r .state <<<"$meta")" == open ]] \
-            || { echo "PR $UPSTREAM_PR is not open; nothing to review."; exit 1; }
+          base_ref=$(jq -r .base.ref <<<"$meta")
+          since=$base_ref
           if [ -n "$REPLAY_SHA" ]; then
             [[ "$REPLAY_SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "Not a commit: $REPLAY_SHA"; exit 1; }
             head_sha=$(gh api "repos/$UPSTREAM/commits/$REPLAY_SHA" --jq .sha)
+            merge=$(jq -r 'if .merged then .merge_commit_sha else "" end' <<<"$meta")
+            # a merged head is in its base branch now; compare with that branch as it was at merge
+            if [ -n "$merge" ]; then
+              since=$(gh api "repos/$UPSTREAM/commits/$merge" --jq '.parents[0].sha')
+            fi
           else
+            [[ "$(jq -r .state <<<"$meta")" == open ]] \
+              || { echo "PR $UPSTREAM_PR is not open; nothing to review."; exit 1; }
             head_sha=$(jq -r .head.sha <<<"$meta")
           fi
-          base_ref=$(jq -r .base.ref <<<"$meta")
-          base_sha=$(gh api "repos/$UPSTREAM/compare/$base_ref...$head_sha" \
+          base_sha=$(gh api "repos/$UPSTREAM/compare/$since...$head_sha" \
             --jq .merge_base_commit.sha)
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"

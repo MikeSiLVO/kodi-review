@@ -206,12 +206,26 @@ def cmd_prev():
     print(reviewed_sha())
 
 
+def piers_ref():
+    """Return the Kodi 22 ref to copy from: the branch, or for a blind replay Kodi 22 as it was."""
+    if not os.environ.get("REPLAY_SHA"):
+        return "Piers"
+    base = os.environ["BASE_SHA"]
+    status = request("GET", f"/repos/{KODI}/compare/{base}...Piers?per_page=1")["status"]
+    if status in ("ahead", "identical"):
+        return base  # master was Kodi 22 until Piers branched
+    commit = request("GET", f"/repos/{UPSTREAM}/commits/{os.environ['HEAD_SHA']}")
+    until = urllib.parse.quote(commit["commit"]["committer"]["date"])
+    return request("GET", f"/repos/{KODI}/commits?sha=Piers&until={until}&per_page=1")[0]["sha"]
+
+
 def cmd_piers():
     """Save Kodi 22 copies of the touched files that already existed and list any not saved."""
     missing, skipped = [], []
     names = [f["filename"] for f in changed_files() if f["status"] != "added"]
+    ref = piers_ref()
     for name in names[:PIERS_FILE_LIMIT]:
-        url = f"/repos/{KODI}/contents/{urllib.parse.quote(name)}?ref=Piers"
+        url = f"/repos/{KODI}/contents/{urllib.parse.quote(name)}?ref={ref}"
         try:
             data = request("GET", url, raw=True)
         except urllib.error.HTTPError as err:
@@ -646,10 +660,11 @@ def body_as_of(edits, cutoff, current):
 
 
 def cmd_pr():
-    """Write title, description, commit messages and target to pr.json, as of a replay's head."""
+    """Write title, description, commits, target and state to pr.json, as of a replay's head."""
     pr = request("GET", f"/repos/{UPSTREAM}/pulls/{os.environ['UPSTREAM_PR']}")
-    body = pr["body"]
+    body, state = pr["body"], pr["state"]
     if os.environ.get("REPLAY_SHA"):
+        state = "open"
         commit = request("GET", f"/repos/{UPSTREAM}/commits/{os.environ['HEAD_SHA']}")
         owner, name = UPSTREAM.split("/")
         data = graphql(BODY_EDITS_QUERY, owner=owner, name=name, number=pr["number"])
@@ -659,7 +674,7 @@ def cmd_pr():
     commits = request("GET", f"/repos/{UPSTREAM}/compare/{span}")["commits"]
     facts = {"number": pr["number"], "title": pr["title"], "body": trimmed_body(body),
              "commits": [c["commit"]["message"].strip() for c in commits],
-             "author": pr["user"]["login"], "target": pr["base"]["ref"], "state": pr["state"],
+             "author": pr["user"]["login"], "target": pr["base"]["ref"], "state": state,
              "draft": pr["draft"]}
     RUN_DIR.mkdir(exist_ok=True)
     (RUN_DIR / "pr.json").write_text(json.dumps(facts, indent=1) + "\n")

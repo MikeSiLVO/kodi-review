@@ -107,6 +107,20 @@ class ReferenceTests(unittest.TestCase):
             review.cmd_piers()
         self.assertEqual(request.call_args.args[1], "/repos/xbmc/xbmc/contents/a.cpp?ref=Piers")
 
+    def test_replay_copies_kodi22_as_it_was(self):
+        """A replay copies its base before Piers branched, else Piers as of the replayed head."""
+        env = {"REPLAY_SHA": "h", "HEAD_SHA": "h", "BASE_SHA": "b"}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(review, "request", return_value={"status": "ahead"}):
+            self.assertEqual(review.piers_ref(), "b")
+        head = {"commit": {"committer": {"date": "2026-10-11T19:11:05Z"}}}
+        answers = [{"status": "diverged"}, head, [{"sha": "p"}]]
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(review, "request", side_effect=answers) as request:
+            self.assertEqual(review.piers_ref(), "p")
+        self.assertEqual(request.call_args.args[1], "/repos/xbmc/xbmc/commits?sha=Piers"
+                         "&until=2026-10-11T19%3A11%3A05Z&per_page=1")
+
 
 class LabelTests(unittest.TestCase):
     """The upstream mergeable rules."""
