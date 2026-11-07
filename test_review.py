@@ -1393,6 +1393,18 @@ class KeepTests(unittest.TestCase):
         self.assertEqual(self.keep(None), "")
         self.assertEqual(self.keep([{"type": "result"}]), "")
 
+    def test_named_file(self):
+        """A pass after the review keeps its output under the name it is given."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run, execution = Path(tmp, ".kodi-review-run"), Path(tmp, "execution.json")
+            execution.write_text(json.dumps([{"type": "result",
+                                              "structured_output": {"candidates": []}}]))
+            argv = ["review.py", "keep", str(execution), "candidates.json"]
+            with mock.patch.object(review, "RUN_DIR", run), mock.patch.object(sys, "argv", argv):
+                review.cmd_keep()
+            self.assertEqual(json.loads((run / "candidates.json").read_text()), {"candidates": []})
+            self.assertFalse((run / "result.json").exists())
+
     def test_withheld_result_posts_only_the_note(self):
         """The post command posts the withheld note and fails; render prints it."""
         withheld = json.dumps({"withheld": True})
@@ -1412,6 +1424,55 @@ class KeepTests(unittest.TestCase):
                     mock.patch("builtins.print") as printed:
                 review.cmd_render()
         printed.assert_called_once_with(review.WITHHELD)
+
+
+class MergeTests(unittest.TestCase):
+    """Verified input-pass findings joining the review's result."""
+
+    def merge(self, result, verified):
+        """Run the merge command over result.json and verified.json and return result.json after."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / "result.json").write_text(result if isinstance(result, str)
+                                             else json.dumps(result))
+            if verified is not None:
+                (run / "verified.json").write_text(json.dumps(verified))
+            with mock.patch.object(review, "RUN_DIR", run):
+                review.cmd_merge()
+            return (run / "result.json").read_text()
+
+    def test_findings_added_and_verdict_raised(self):
+        """A Moderate addition lands after the review's findings and raises the verdict to match."""
+        own = {"path": "b.cpp", "line": 1, "severity": "Minor", "title": "s", "problem": "p",
+               "fix": "f"}
+        base = dict(RESULT, verdict="Merge after small fixes", findings=[own])
+        added = {"path": "a.cpp", "line": 3, "severity": "Moderate", "title": "t", "problem": "p",
+                 "fix": "f"}
+        merged = json.loads(self.merge(base, {"findings": [added]}))
+        self.assertEqual(merged["findings"], [own, added])
+        self.assertEqual(merged["verdict"], "Needs more work")
+
+    def test_minor_addition(self):
+        """A Minor addition raises Ready to merge one step and leaves worse verdicts as they are."""
+        added = [{"path": "a.cpp", "line": 3, "severity": "Minor", "title": "t", "problem": "p",
+                  "fix": "f"}]
+        ready = json.loads(self.merge(dict(RESULT, verdict="Ready to merge"), {"findings": added}))
+        self.assertEqual(ready["verdict"], "Merge after small fixes")
+        worse = json.loads(self.merge(dict(RESULT, verdict="Needs more work"), {"findings": added}))
+        self.assertEqual(worse["verdict"], "Needs more work")
+        team = json.loads(self.merge(dict(RESULT, verdict="Needs a team decision"),
+                                     {"findings": added}))
+        self.assertEqual(team["verdict"], "Needs a team decision")
+
+    def test_nothing_to_add(self):
+        """No verified file, an empty or withheld one, or a withheld review leaves it unchanged."""
+        before = json.dumps(dict(RESULT, verdict="Ready to merge"))
+        self.assertEqual(self.merge(before, None), before)
+        self.assertEqual(self.merge(before, {"findings": []}), before)
+        self.assertEqual(self.merge(before, {"withheld": True}), before)
+        withheld = json.dumps({"withheld": True})
+        self.assertEqual(self.merge(withheld, {"findings": [{"severity": "Minor"}]}), withheld)
+        self.assertEqual(self.merge("", {"findings": [{"severity": "Minor"}]}), "")
 
 
 class PreloadTests(unittest.TestCase):

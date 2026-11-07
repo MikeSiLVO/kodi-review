@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidates"],
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line", "unit", "input", "base", "new", "chain", "severity", "title",
+                     "problem", "fix"],
+        "properties": {
+          "path": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "unit": {"type": "string"},
+          "input": {"type": "string"},
+          "base": {"type": "string"},
+          "new": {"type": "string"},
+          "chain": {"type": "string"},
+          "severity": {"type": "string", "enum": ["Serious", "Moderate", "Minor"]},
+          "title": {"type": "string", "maxLength": 80},
+          "problem": {"type": "string"},
+          "fix": {"type": "string"}
+        }
+      }
+    }
+  }
+}

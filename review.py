@@ -141,6 +141,7 @@ QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
              "touches.txt", "tests.txt", "knowledge.md", "original.diff", "new.diff", "full.diff")
 PRELOAD_LIMIT = 40_000
+MERGE_VERDICTS = ("Ready to merge", "Merge after small fixes", "Needs more work")
 BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
 ASKER = re.compile(r"(issue|review)/(\d+)")
@@ -1768,7 +1769,7 @@ def usage_lines(messages):
 
 
 def cmd_keep():
-    """Keep the run's result in result.json, or only a withheld marker if it holds a credential."""
+    """Keep a run's result in result.json or the named file, withheld if it holds a credential."""
     try:
         messages = json.loads(Path(sys.argv[2]).read_text())
     except (OSError, IndexError, json.JSONDecodeError):
@@ -1779,7 +1780,24 @@ def cmd_keep():
     if CREDENTIAL.search(text):
         text = json.dumps({"withheld": True})
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "result.json").write_text(text)
+    (RUN_DIR / (sys.argv[3] if len(sys.argv) > 3 else "result.json")).write_text(text)
+
+
+def cmd_merge():
+    """Add the verified input-pass findings to result.json and raise its verdict to match them."""
+    target = RUN_DIR / "result.json"
+    try:
+        result = json.loads(target.read_text())
+        added = json.loads((RUN_DIR / "verified.json").read_text())["findings"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if not added or not isinstance(result, dict) or result.get("withheld"):
+        return
+    result["findings"] = result.get("findings", []) + added
+    if result.get("verdict") in MERGE_VERDICTS:
+        floor = MERGE_VERDICTS[2 if any(f["severity"] != "Minor" for f in added) else 1]
+        result["verdict"] = max(result["verdict"], floor, key=MERGE_VERDICTS.index)
+    target.write_text(json.dumps(result, ensure_ascii=False))
 
 
 def cmd_usage():
@@ -1791,7 +1809,7 @@ COMMANDS = {"pr": cmd_pr, "prev": cmd_prev, "prior": cmd_prior, "piers": cmd_pie
             "touches": cmd_touches, "status": cmd_status,
             "discussion": cmd_discussion, "post": cmd_post, "render": cmd_render,
             "trigger": cmd_trigger, "question": cmd_question, "reply": cmd_reply,
-            "preload": cmd_preload, "keep": cmd_keep,
+            "preload": cmd_preload, "keep": cmd_keep, "merge": cmd_merge,
             "usage": cmd_usage, "format": cmd_format, "format-post": cmd_format_post,
             "knowledge": cmd_knowledge, "tests": cmd_tests,
             "format-render": cmd_format_render, "help": cmd_help}
