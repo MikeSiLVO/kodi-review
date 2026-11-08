@@ -52,12 +52,15 @@ class PullShapeTests(unittest.TestCase):
         self.assertEqual(rules(rows), ["pr.single-commit", "pr.merge-commit"])
 
     def test_titles(self):
-        """Subject and title must read [<id>] <version>; a v before the version passes."""
-        meta = {"title": "[script.test] v1.2.0"}
+        """Subject and title read [<id>] <version>; v and @<target> pass, other branches do not."""
+        base = {"base": {"ref": "matrix"}}
+        meta = {**base, "title": "[script.test@matrix] v1.2.0"}
         self.assertEqual(addon.title_rows(meta, [commit("[script.test] 1.2.0")], ADDON), [])
-        rows = addon.title_rows({"title": "Update"}, [commit("[script.test] 1.1.0")], ADDON)
+        rows = addon.title_rows({**base, "title": "Update"},
+                                [commit("[script.test@omega] 1.2.0")], ADDON)
         self.assertEqual(rules(rows), ["pr.commit-subject", "pr.title"])
-        self.assertIn("'[script.test] 1.1.0', not '[script.test] 1.2.0'", rows[0]["message"])
+        self.assertIn("'[script.test@omega] 1.2.0', not '[script.test] 1.2.0'",
+                      rows[0]["message"])
 
 
 class LinkTests(unittest.TestCase):

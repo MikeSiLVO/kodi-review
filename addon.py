@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,8 @@ BOT_RULES = {"pr.one-addon": "One add-on folder per pull request",
              "addon.provider-changed": "Provider or submitter changed"}
 OLD_RELEASES = ("gotham", "helix", "isengard", "jarvis", "krypton", "leia")
 INDEX_URL = "https://mirrors.kodi.tv/addons/{}/addons.xml.gz"
+INDEX_RETRY_PAUSES = (10, 30)
+RELEASED_RULES = ("addon.version-not-higher",)
 METADATA_POINTS = ("xbmc.addon.metadata", "kodi.addon.metadata")
 LINK_TAGS = ("forum", "source", "website")
 WEB_SCHEMES = ("https", "http")
@@ -44,7 +47,7 @@ LINK_TIMEOUT = 10
 RETRY_STATUSES = (403, 405, 429)
 BROWSER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
                  "Chrome/130.0 Safari/537.36")
-RELEASE_TITLE = re.compile(r"\[([^\]\s]+)\] v?(\S+)")
+RELEASE_TITLE = re.compile(r"\[([^\]\s@]+)(?:@([a-z]+))?\] v?(\S+)")
 PULL_CHECK = "Pull request"
 LINK_CHECK = "Links"
 
@@ -75,10 +78,11 @@ def changed_places(files):
                                                                          if "/" not in n)
 
 
-def names_release(text, addon):
-    """Whether a subject or title reads [<id>] <version>, v allowed, for the add-on checked."""
+def names_release(text, addon, branch):
+    """Whether subject or title reads [<id>] <version> for the add-on, v and @<target> allowed."""
     match = RELEASE_TITLE.fullmatch(text.strip())
-    return bool(match) and match[1] == addon["id"] and match[2] == addon["version"]
+    return (bool(match) and match[1] == addon["id"] and match[2] in (None, branch)
+            and match[3] == addon["version"])
 
 
 def commit_rows(commits, folders, loose):
@@ -103,12 +107,12 @@ def title_rows(meta, commits, addon):
     """Check the last commit's subject and the pull request's title name the add-on release."""
     wanted = f"[{addon['id']}] {addon['version']}"
     subject = (commits[-1]["commit"]["message"] or "").split("\n", 1)[0] if commits else ""
-    title = meta.get("title") or ""
+    title, branch = meta.get("title") or "", meta["base"]["ref"]
     rows = []
-    if not names_release(subject, addon):
+    if not names_release(subject, addon, branch):
         rows.append(bot_row(PULL_CHECK, "pr.commit-subject", "warning",
                             f"The commit subject is '{subject.strip()}', not '{wanted}'"))
-    if not names_release(title, addon):
+    if not names_release(title, addon, branch):
         rows.append(bot_row(PULL_CHECK, "pr.title", "hint",
                             f"The pull request title is '{title.strip()}', not '{wanted}'"))
     return rows
@@ -222,15 +226,20 @@ def provider_rows(meta, addon, base_addon, folder, branch):
 
 
 def fetch_indexes(folder):
-    """Fetch each branch's add-on index into a folder, leaving out any that fail."""
+    """Fetch each branch's add-on index a folder lacks, retrying twice, skipping any that fail."""
     folder.mkdir(parents=True, exist_ok=True)
     for branch in (*OLD_RELEASES, *RELEASES):
         target = folder / f"{branch}.xml.gz"
-        try:
-            download(INDEX_URL.format(branch), target)
-        except SkinError as err:
-            print(f"No {branch} index: {err}")
-            target.unlink(missing_ok=True)
+        for pause in (*INDEX_RETRY_PAUSES, None):
+            if target.exists() and target.stat().st_size:
+                break
+            try:
+                download(INDEX_URL.format(branch), target)
+            except SkinError as err:
+                print(f"No {branch} index: {err}")
+                target.unlink(missing_ok=True)
+                if pause:
+                    time.sleep(pause)
 
 
 def addon_tree(sha, folder, tree, index):
@@ -269,7 +278,9 @@ def addon_result(head_tree, base_tree, folder, release):
     base_run = validate(base_tree, folder, release, out / "base") if base_tree else None
     sides = ["/check/base/kdk.json"] * bool(base_run) + ["/check/head/kdk.json"]
     changes = run_kdk(out, out, "compare", *sides)
-    rows, head_rows = compared(changes, (head_run, base_run)), findings(head_run)
+    rows = [r for r in compared(changes, (head_run, base_run))
+            if not (r["status"] == "fixed" and r["rule"] in RELEASED_RULES)]
+    head_rows = findings(head_run)
     return {**report_facts(head_run, folder), "folder": folder, "release": release,
             "kdk": head_run.get("kdk_version", ""),
             "checker": head_run.get("addoncheck_version", ""),

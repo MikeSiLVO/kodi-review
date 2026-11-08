@@ -466,6 +466,18 @@ jobs:
             && echo "KDK_PYTHON=$RUNNER_TEMP/kdk/bin/python" >> "$GITHUB_ENV" \
             || echo "::warning::kdk did not install"
 
+      - name: Name today for the add-on index cache
+        id: day
+        if: inputs.mode == 'addon'
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache today's add-on indexes
+        if: inputs.mode == 'addon'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/addon/index
+          key: addon-index-${{ steps.day.outputs.day }}
+
       - name: Check the skin or add-on
         id: check
         run: |
