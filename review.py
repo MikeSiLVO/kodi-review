@@ -24,6 +24,8 @@ MARKER = re.compile(r"<!-- kodi-review sha=([0-9a-f]{40}|) -->")
 FORMAT_MARKER = re.compile(r"<!-- kodi-review format sha=([0-9a-f]{40}) -->")
 SKIN_MARKER = re.compile(r"<!-- kodi-review skin (\w+)=(\S+)(.*?) -->")
 SKIN_REPOS = ("xbmc/repo-skins", "MikeSiLVO/repo-skins")
+ADDON_MARKER = re.compile(r"<!-- kodi-review addon (\w+)=(\S+)(.*?) -->")
+SCRIPT_REPOS = ("xbmc/repo-scripts", "MikeSiLVO/repo-scripts")
 PIERS_FILE_LIMIT = 40
 SOURCES = ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inl", "*.m", "*.mm")
 SECTION = re.compile(r"^diff --git a/\S+ b/(\S+)$", re.M)
@@ -1456,6 +1458,15 @@ def check_skin_recheck():
         sys.exit(f"The skin check of {head[:12]} is already posted.")
 
 
+def check_addon_recheck():
+    """Check a push may recheck the add-on: exit 1 on a current check of this head."""
+    checks = addon_comments()
+    head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+    marker = ADDON_MARKER.match(checks[-1]["body"]) if checks else None
+    if marker and marker[2] == head and marker[3].strip() == addon_build():
+        sys.exit(f"The add-on check of {head[:12]} is already posted.")
+
+
 def replies_to_finding(comment):
     """Whether a review comment replies to one of the bot's unsettled findings."""
     parent = comment.get("in_reply_to_id")
@@ -1479,6 +1490,21 @@ def skin_build():
     kdk = wheels[-1].name.split("-")[1] if wheels else "none"
     style = hashlib.sha256((here / "skin.py").read_bytes()).hexdigest()[:12]
     return f"kdk={kdk} style={style}"
+
+
+def addon_comments():
+    """Return the bot's add-on check comments on the pull request, oldest first."""
+    return [c for c in paged(f"/repos/{REPO}/issues/{os.environ['FORK_PR']}/comments")
+            if c["user"]["type"] == "Bot" and ADDON_MARKER.match(c["body"] or "")]
+
+
+def addon_build():
+    """Return the vendored kdk version and the add-on check's code hash its marker carries."""
+    here = Path(__file__).resolve().parent
+    wheels = sorted((here / "vendor" / "kdk").glob("kdk-*.whl"))
+    kdk = wheels[-1].name.split("-")[1] if wheels else "none"
+    code = b"".join((here / name).read_bytes() for name in ("addon.py", "skin.py"))
+    return f"kdk={kdk} style={hashlib.sha256(code).hexdigest()[:12]}"
 
 
 def asks_again(body):
@@ -1526,6 +1552,8 @@ def cmd_trigger():
     if os.environ.get("SOURCE") == "push":
         if os.environ.get("MODE") == "skin":
             check_skin_recheck()
+        elif os.environ.get("MODE") == "addon":
+            check_addon_recheck()
         else:
             check_recheck()
         return
@@ -1559,6 +1587,9 @@ def cmd_trigger():
             refuse("closed", "This is closed, so I won't run anything here.")
         if "pull_request" not in thread and REPO not in SKIN_REPOS:
             refuse("issue", "I only run on pull requests here.")
+    if REPO in SCRIPT_REPOS:
+        refuse("script-repo", "The add-on check runs on its own on every push here; mentions run "
+               "nothing on this repository.")
     if REPO in SKIN_REPOS and asked not in ("skin", "help"):
         refuse("skin-repo",
                "Only `@kodi-review skin` and `@kodi-review help` run on this repository.")

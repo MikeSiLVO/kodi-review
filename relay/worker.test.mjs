@@ -245,6 +245,27 @@ test("a skin repo pull request asks for a skin check when opened, reopened or pu
   assert.equal(await followUp("pull_request", payload("opened"), repos, none), null);
 });
 
+test("a script repo pull request asks for an add-on check, and any mention there is refused",
+  async () => {
+    const repos = ["xbmc/repo-scripts"];
+    const payload = (action) => ({ action, repository: { full_name: "xbmc/repo-scripts" },
+      pull_request: { number: 4, state: "open" } });
+    for (const action of ["opened", "reopened", "synchronize"]) {
+      assert.deepEqual(await followUp("pull_request", payload(action), repos, lookup({}), [],
+        repos), [{ pr: "4", repo: "xbmc/repo-scripts", comment: "", mode: "addon",
+        source: "push" }], action);
+    }
+    assert.equal(await followUp("pull_request", payload("labeled"), repos, lookup({}), [],
+      repos), null);
+    for (const body of ["@kodi-review review", "@kodi-review help", "@kodi-review skin"]) {
+      const asked = trigger("issue_comment", issueComment({
+        repository: { full_name: "xbmc/repo-scripts" },
+        comment: { id: 5, body, author_association: "MEMBER", user: { type: "User" } } }),
+        repos, [], repos);
+      assert.equal(asked.mode, "refuse", body);
+    }
+  });
+
 test("a skin repo pull request opening dispatches a skin check", async (t) => {
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, init) => {

@@ -13,7 +13,7 @@ export function spoken(body) {
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
 const OPEN_MODES = new Set(["format", "skin", "help"]);
 const SKIN_REPO_MODES = new Set(["skin", "help"]);
-const SKIN_ACTIONS = new Set(["opened", "reopened", "synchronize"]);
+const CHECK_ACTIONS = new Set(["opened", "reopened", "synchronize"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
 const SUMMARY = /^<!-- kodi-review sha=/;
@@ -32,7 +32,7 @@ export async function verify(secret, body, signature) {
 }
 
 /** Return a new mention's inputs, or null; mode refuse when repo, page or asker rules it out. */
-export function trigger(event, payload, allowed, skinRepos = []) {
+export function trigger(event, payload, allowed, skinRepos = [], scriptRepos = []) {
   if (payload.action !== "created" || !allowed.includes(payload.repository?.full_name)) return null;
   const comment = payload.comment;
   const words = spoken(comment?.body || "");
@@ -50,7 +50,7 @@ export function trigger(event, payload, allowed, skinRepos = []) {
   const repo = payload.repository.full_name;
   const skinRepo = skinRepos.includes(repo);
   const again = mode === "skin" && AGAIN.test(after.split("\n", 1)[0]);
-  const refused = pr.state !== "open"
+  const refused = pr.state !== "open" || scriptRepos.includes(repo)
     || ((onIssue || skinRepo) && (!SKIN_REPO_MODES.has(mode) || !skinRepo))
     || ((!OPEN_MODES.has(mode) || again) && STRANGERS.has(comment.author_association));
   return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`,
@@ -73,13 +73,14 @@ async function latestChecks(repo, number, get) {
 }
 
 /** Return the runs for a pull request opening or push, or a finding's reply. */
-export async function followUp(event, payload, allowed, get, skinRepos = []) {
+export async function followUp(event, payload, allowed, get, skinRepos = [], scriptRepos = []) {
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
   if (!allowed.includes(repo) || !pr || pr.state !== "open") return null;
   if (event === "pull_request") {
     const run = (mode) => ({ pr: String(pr.number), repo, comment: "", mode, source: "push" });
-    if (skinRepos.includes(repo)) return SKIN_ACTIONS.has(payload.action) ? [run("skin")] : null;
+    const check = skinRepos.includes(repo) ? "skin" : scriptRepos.includes(repo) ? "addon" : "";
+    if (check) return CHECK_ACTIONS.has(payload.action) ? [run(check)] : null;
     if (payload.action !== "synchronize") return null;
     const { summary, skin } = await latestChecks(repo, pr.number, get);
     const runs = [];
@@ -123,9 +124,10 @@ export default {
     const payload = JSON.parse(body);
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
     const skinRepos = (env.SKIN_REPOS || "").split(/\s+/);
-    const asked = trigger(event, payload, allowed, skinRepos);
+    const scriptRepos = (env.SCRIPT_REPOS || "").split(/\s+/);
+    const asked = trigger(event, payload, allowed, skinRepos, scriptRepos);
     const runs = asked ? [asked] : await followUp(event, payload, allowed,
-      (path) => readGitHub(path, env.DISPATCH_TOKEN), skinRepos);
+      (path) => readGitHub(path, env.DISPATCH_TOKEN), skinRepos, scriptRepos);
     if (!runs) return new Response("Ignored", { status: 202 });
     const replies = await Promise.all(runs.map((inputs) => fetch(
       `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/review.yml/dispatches`, {

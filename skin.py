@@ -25,6 +25,7 @@ from review import (AGAIN, CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, asks_a
 KODI_REPOS = ("xbmc/xbmc", "MikeSiLVO/xbmc")
 GUI_RELEASES = {"5.17": "omega", "5.18": "piers"}
 RELEASE_NAMES = {"omega": "Kodi 21 (Omega)", "piers": "Kodi 22 (Piers)"}
+SKIN_WORDS = {"title": "Skin check", "noun": "skin", "releases": RELEASE_NAMES}
 KODI_PATHS = ("system", "addons/resource.language.en_gb", "addons/xbmc.gui",
               "xbmc/GUIInfoManager.cpp")
 DEFAULT_SKIN = "addons/skin.estuary"
@@ -37,8 +38,8 @@ KDK_TIMEOUT = 900
 COMMENT_LIMIT = 60_000
 PLACES_SHOWN = 10
 ROWS_SHOWN = 25
-SECTION_ICONS = {"error": "🔴", "warning": "🟡", "fixed": "✅"}
-SEVERITY_WORDS = {"error": "Error", "warning": "Warning"}
+SECTION_ICONS = {"error": "🔴", "warning": "🟡", "hint": "⚪", "fixed": "✅"}
+SEVERITY_WORDS = {"error": "Error", "warning": "Warning", "hint": "Hint"}
 REPORT_LIMIT = 900_000
 ASK_START = re.compile(r"@kodi-review", re.I)
 LINK = re.compile(r"https://[^\s<>()\[\]`'\"]+")
@@ -53,6 +54,7 @@ NAME = re.compile(r"'([^'\n]{1,120})'|(</?[A-Za-z][^<>\n]{0,80}>)|(?<=: )([^\s'`
 MARKUP = re.compile(r"([\\`*_\[\]#|~!])")
 ISSUE_REF = re.compile(r"#(?=\d)")
 USER_AGENT = "kodi-review"
+DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 class SkinError(Exception):
@@ -83,13 +85,14 @@ def github_page(link, revision=""):
     return match[1], match[2], match[3] or revision
 
 
-def check_public(link):
-    """Check a link is https on the default port and resolves only to public addresses."""
+def check_public(link, schemes=("https",)):
+    """Check a link has an allowed scheme and default port and resolves only to public addresses."""
     parts = urllib.parse.urlsplit(link)
-    if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443):
-        raise SkinError(f"only https links can be checked, not {code(link[:200])}")
+    port = DEFAULT_PORTS.get(parts.scheme)
+    if parts.scheme not in schemes or not parts.hostname or parts.port not in (None, port):
+        raise SkinError(f"only {' or '.join(schemes)} links can be checked, not {code(link[:200])}")
     try:
-        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, 443)}
+        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, port)}
     except OSError as err:
         raise SkinError(f"could not look up {code(parts.hostname)}") from err
     if not addresses or not all(ipaddress.ip_address(str(a).split("%")[0]).is_global
@@ -370,7 +373,7 @@ def skin_result(head, base, release, kodi, branch):
     rows, head_rows = compared(changes, (head_run, base_run)), findings(head_run)
     return {"id": info.get("id") or Path(skin).name, "version": info.get("version", ""),
             "release": release, "branch": branch, "kdk": head_run.get("kdk_version", ""),
-            "notices": head_run.get("notices") or [], "new_skin": base_run is None,
+            "notices": head_run.get("notices") or [], "new": base_run is None,
             "head": totals(head_run), "base": totals(base_run) if base_run else None,
             "rows": rows, "existing": existing(head_rows, rows) if base_run else [],
             "all": head_rows}
@@ -428,7 +431,7 @@ def check_kodi_pr(scratch):
         if "head" in trees:
             results.append(skin_result(trees["head"], trees.get("base"), release, True, branch))
             folders.append(skin)
-    based = any(not r["new_skin"] for r in results)
+    based = any(not r["new"] for r in results)
     return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
             "skins": results}
 
@@ -452,7 +455,7 @@ def check_skins_pr(scratch):
         base_side = (base_tree, skin) if git_tree(REPO, base, [skin], base_tree) else None
         results.append(skin_result((head_tree, skin), base_side, branch, False, branch))
         folders.append(skin)
-    based = any(not r["new_skin"] for r in results)
+    based = any(not r["new"] for r in results)
     return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
             "skins": results}
 
@@ -727,38 +730,43 @@ def fold(summary, body, opened=False, indent=False):
 
 
 def kind_fold(kind, rows, rules, rows_shown, table, muted=False):
-    """Format a kind's example and any table as a fold, with a muted kind's severity and reasons."""
-    files = spread(rows)
+    """Format a kind's example or messages and table as a fold; muted, with severity and reasons."""
+    placed = [r for r in rows if r["file"] or r.get("files")]
     severity = f"{SEVERITY_WORDS.get(kind[2], kind[2])} · " if muted else ""
+    spots = f" in {plural(spread(placed), 'file')}" if placed else ""
     summary = (f"{severity}<b>{plain(kind[0])}</b> · {plain(problem_name(kind, rows, rules))} "
-               f"<code>{count(rows)}</code> in {plural(files, 'file')}")
-    body = example(kind, rows)
+               f"<code>{count(rows)}</code>{spots}")
+    if placed:
+        body = example(kind, rows)
+    else:
+        messages = sorted({tidy(kind[0], r["message"]) for r in rows})
+        body = "\n".join([code(kind[1] or kind[0]), "", *(f"- {code(m)}" for m in messages)])
     if muted:
         reasons = sorted({r["reason"] for r in rows})
         body = f"Muted as {', '.join(code(r) for r in reasons)}.\n\n{body}"
-    if table:
+    if table and placed:
         body += "\n\n" + finding_table(kind, rows, rows_shown)
     return fold(summary, body)
 
 
-def severity_section(kinds, severity, rules, new_skin, rows_shown, bare):
+def severity_section(kinds, severity, rules, new, rows_shown, bare):
     """Format one severity's kinds as an indented fold under its icon and counts."""
     members = [(k, rows) for k, rows in kinds if k[2] == severity]
     if not members:
         return ""
-    noun = ("" if new_skin else "new ") + severity
+    noun = ("" if new else "new ") + severity
     title = (f"{SECTION_ICONS[severity]} <b>{plural(sum(count(r) for _, r in members), noun)}, "
              f"{plural(len(members), 'kind')}</b>")
     inner = "\n".join(kind_fold(k, rows, rules, rows_shown, k not in bare) for k, rows in members)
     return fold(title, inner, opened=severity == "error", indent=True)
 
 
-def muted_section(kinds, rules, rows_shown, bare):
-    """Format the kinds the skin muted as a closed indented fold under their count."""
+def muted_section(kinds, rules, rows_shown, bare, noun):
+    """Format the kinds the skin or add-on muted as a closed indented fold under their count."""
     total = sum(count(rows) for _, rows in kinds)
     inner = "\n".join(kind_fold(k, rows, rules, rows_shown, ("muted", *k) not in bare, True)
                       for k, rows in kinds)
-    return fold(f"<b>{total} muted by the skin</b>", inner, indent=True)
+    return fold(f"<b>{total} muted by the {noun}</b>", inner, indent=True)
 
 
 def digest(kinds, rules):
@@ -777,60 +785,61 @@ def digest_of(rows):
             for kind, items in problems(rows)]
 
 
-def verdict(skin, new, muted, fixed, there):
+def verdict(result, new, muted, fixed, there, noun):
     """Say what is new, then what was fixed, muted and already there."""
-    errors = sum(r["count"] for r in new if r["severity"] == "error")
-    warnings = count(new) - errors
-    prefix = "" if skin["new_skin"] else "new "
-    found = " and ".join(plural(n, prefix + kind) for kind, n in (("error", errors),
-                                                                   ("warning", warnings)) if n)
+    prefix = "" if result["new"] else "new "
+    found = [plural(n, prefix + severity) for severity in SEVERITY_WORDS
+             if (n := count([r for r in new if r["severity"] == severity]))]
+    found = " and ".join([", ".join(found[:-1]), found[-1]] if len(found) > 2 else found)
     if not found:
-        found = "no problems" if skin["new_skin"] else "no new problems"
+        found = "no problems" if result["new"] else "no new problems"
     extras = [f"{count(fixed)} fixed" if fixed else "",
-              f"{count(muted)} muted by the skin" if muted else "",
-              f"{there} already there before {skin['version'] or 'this version'}" if there else ""]
+              f"{count(muted)} muted by the {noun}" if muted else "",
+              f"{there} already there before {result['version'] or 'this version'}" if there
+              else ""]
     extras = [e for e in extras if e]
     return found[0].upper() + found[1:] + "." + (f" {', '.join(extras).capitalize()}."
                                                  if extras else "")
 
 
-def skin_body(skin, rules, rows_shown, bare):
-    """Format one skin's part, some tables left out; return it with its new and muted kinds."""
-    new = [r for r in skin["rows"] if r["status"] == "new"]
-    muted = [r for r in skin["rows"] if r["status"] == "muted"]
-    fixed = [r for r in skin["rows"] if r["status"] == "fixed" and not r["muted"]]
-    there = [((c, r, s), n, []) for c, r, s, n in skin.get("existing", [])]
+def skin_body(result, rules, rows_shown, bare, words=SKIN_WORDS):
+    """Format one skin's or add-on's part, some tables left out; return it with its kinds."""
+    new = [r for r in result["rows"] if r["status"] == "new"]
+    muted = [r for r in result["rows"] if r["status"] == "muted"]
+    fixed = [r for r in result["rows"] if r["status"] == "fixed" and not r["muted"]]
+    there = [((c, r, s), n, []) for c, r, s, n in result.get("existing", [])]
     there.sort(key=lambda k: (k[0][2] != "error", -k[1]))
-    against = RELEASE_NAMES.get(skin["release"], skin["release"])
-    compared = (", a new skin" if skin["new_skin"]
-                else f" against the version on {plain(skin.get('branch') or 'the base')}")
+    against = words["releases"].get(result["release"], result["release"])
+    compared = (f", a new {words['noun']}" if result["new"]
+                else f" against the version on {plain(result.get('branch') or 'the base')}")
     kinds, muted_kinds = problems(new), problems(muted)
-    parts = [f"**Skin check** · {code(skin['id'])} {plain(skin['version'])}{compared} · {against}",
-             verdict(skin, new, muted, fixed, sum(n for _, n, _ in there))]
-    if skin.get("raised"):
+    parts = [f"**{words['title']}** · {code(result['id'])} {plain(result['version'])}{compared}"
+             f" · {against}",
+             verdict(result, new, muted, fixed, sum(n for _, n, _ in there), words["noun"])]
+    if result.get("raised"):
         parts.append("Kodi repo findings that block a submission count as errors.")
-    parts += [f"> {nice(notice)}" for notice in skin["notices"]]
-    for severity in ("error", "warning"):
-        if part := severity_section(kinds, severity, rules, skin["new_skin"], rows_shown, bare):
+    parts += [f"> {nice(notice)}" for notice in result["notices"]]
+    for severity in SEVERITY_WORDS:
+        if part := severity_section(kinds, severity, rules, result["new"], rows_shown, bare):
             parts.append(part)
     if fixed:
         parts.append(fold(f"{SECTION_ICONS['fixed']} <b>{count(fixed)} fixed</b>",
                           digest(digest_of(fixed), rules)))
     if muted:
-        parts.append(muted_section(muted_kinds, rules, rows_shown, bare))
+        parts.append(muted_section(muted_kinds, rules, rows_shown, bare, words["noun"]))
     if there:
         total = sum(n for _, n, _ in there)
-        parts.append(fold(f"<b>{total} already there before {plain(skin['version'])}</b>",
+        parts.append(fold(f"<b>{total} already there before {plain(result['version'])}</b>",
                           digest(there, rules)))
     return "\n\n".join(parts), kinds, muted_kinds
 
 
-def skin_part(skin, rules, room, run):
-    """Format one skin within its room, cutting rows, then tables: muted, warnings, small first."""
-    text, kinds, muted = skin_body(skin, rules, None, set())
+def skin_part(result, rules, room, run, words=SKIN_WORDS):
+    """Format one part in its room, cutting rows, then tables: muted, errors last, small first."""
+    text, kinds, muted = skin_body(result, rules, None, set(), words)
     if len(text) <= room:
         return text
-    text, _, _ = skin_body(skin, rules, ROWS_SHOWN, set())
+    text, _, _ = skin_body(result, rules, ROWS_SHOWN, set(), words)
     order = [("muted", *k) for k, _ in sorted(muted, key=lambda k: count(k[1]))]
     order += [k for k, _ in sorted(kinds, key=lambda k: (k[0][2] == "error", count(k[1])))]
     bare = set()
@@ -838,7 +847,7 @@ def skin_part(skin, rules, room, run):
         if len(text) <= room - 200:
             break
         bare.add(kind)
-        text, _, _ = skin_body(skin, rules, ROWS_SHOWN, bare)
+        text, _, _ = skin_body(result, rules, ROWS_SHOWN, bare, words)
     note = (f"Some places are left out to fit a comment; the [run's summary]({run}) lists every "
             "finding.")
     head, _, rest = text.partition("\n\n")

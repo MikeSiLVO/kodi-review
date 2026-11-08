@@ -343,7 +343,7 @@ class RenderTests(unittest.TestCase):
         report = report or changes(base, head)
         rows, head_rows = skin.compared(report, (head, base)), skin.findings(head)
         result = {"id": "skin.test", "version": "1.2.0", "release": "piers", "branch": "piers",
-                  "kdk": "3.0.1", "notices": [], "new_skin": base is None,
+                  "kdk": "3.0.1", "notices": [], "new": base is None,
                   "head": skin.totals(head), "base": skin.totals(base) if base else None,
                   "rows": rows, "existing": skin.existing(head_rows, rows) if base else [],
                   "all": head_rows}
