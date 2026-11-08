@@ -341,7 +341,12 @@ jobs:
           [[ "$CANDIDATES_RUN" =~ ^[0-9]+$ ]] || { echo "Not a run id: $CANDIDATES_RUN"; exit 1; }
           gh run download "$CANDIDATES_RUN" --repo "$GITHUB_REPOSITORY" -n review \
             -D "$RUNNER_TEMP/saved"
-          cp "$RUNNER_TEMP/saved/result.json" "$RUNNER_TEMP/saved/candidates.json" .kodi-review-run/
+          saved=$RUNNER_TEMP/saved
+          cp "$saved/candidates.json" .kodi-review-run/
+          # the saved result already ends with that run's verified findings
+          kept=$(jq '.findings | length' "$saved/verified.json" 2>/dev/null || true)
+          jq --argjson kept "${kept:-0}" '.findings |= .[:length - $kept]' "$saved/result.json" \
+            > .kodi-review-run/result.json
           count=$(jq '.candidates | length' .kodi-review-run/candidates.json 2>/dev/null || echo 0)
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
