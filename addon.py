@@ -243,6 +243,23 @@ def fetch_indexes(folder):
                     time.sleep(pause)
 
 
+def own_copies(folder, branch):
+    """Return whether each newer branch holds its own add-on copy; failed checks left out."""
+    names = list(RELEASES)
+    copies = {}
+    for newer in names[names.index(branch) + 1:]:
+        path = f"/repos/{REPO}/contents/{urllib.parse.quote(folder)}?ref={newer}"
+        try:
+            request("GET", path)
+        except urllib.error.HTTPError as err:
+            if err.code != 404:
+                continue
+            copies[newer] = False
+        else:
+            copies[newer] = True
+    return copies
+
+
 def addon_tree(sha, folder, tree, index):
     """Unpack an add-on folder at a commit, with its git file list and the indexes beside it."""
     if not git_tree(REPO, sha, [folder], tree):
@@ -331,6 +348,7 @@ def check_scripts_pr(scratch):
     index = scratch / "index"
     fetch_indexes(index)
     for folder in [f for f in folders if not f.startswith(".")][:1]:
+        (index / "copies.json").write_text(json.dumps(own_copies(folder, branch)))
         head_tree, base_tree = scratch / "head" / folder, scratch / "base" / folder
         has_base = addon_tree(base, folder, base_tree, index)
         if not addon_tree(head, folder, head_tree, index):

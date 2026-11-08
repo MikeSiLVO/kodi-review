@@ -111,6 +111,25 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(rules(rows), ["addon.url-broken"])
 
 
+class CopiesTests(unittest.TestCase):
+    """Newer release branches that hold their own copy of the add-on."""
+
+    def test_newer_branches_only(self):
+        """Only branches above the target are asked; a 404 is no copy, other failures unknown."""
+        def answer(method, path):
+            """Stand in for the contents API: piers lacks the folder, nexus fails."""
+            if "ref=piers" in path:
+                raise urllib.error.HTTPError(path, 404, "Not Found", Message(), io.BytesIO())
+            if "ref=nexus" in path:
+                raise urllib.error.HTTPError(path, 500, "Error", Message(), io.BytesIO())
+            return []
+        with mock.patch.object(addon, "request", side_effect=answer):
+            self.assertEqual(addon.own_copies("script.test", "matrix"), {"omega": True,
+                                                                        "piers": False})
+            self.assertEqual(addon.own_copies("script.test", "omega"), {"piers": False})
+            self.assertEqual(addon.own_copies("script.test", "piers"), {})
+
+
 class ProviderTests(unittest.TestCase):
     """Provider name and submitter changes against the copy on the branch."""
 
