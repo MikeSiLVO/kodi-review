@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from skin import (ADDON_XML_LIMIT, COMMENT_LIMIT, REPORT_LIMIT, SEVERITY_WORDS, 
 
 RELEASES = {"matrix": "Kodi 19 (Matrix)", "nexus": "Kodi 20 (Nexus)",
             "omega": "Kodi 21 (Omega)", "piers": "Kodi 22 (Piers)"}
-ADDON_WORDS = {"title": "Add-on check", "noun": "add-on", "releases": RELEASES}
+ADDON_WORDS = {"title": "Add-on check", "noun": "add-on", "releases": RELEASES, "listed": True}
 BOT_RULES = {"pr.one-addon": "One add-on folder per pull request",
              "pr.single-commit": "One commit per add-on update",
              "pr.merge-commit": "Merge commit in the pull request",
@@ -271,6 +272,26 @@ def report_facts(run, folder):
             "provider": run.get("provider_name", "")}
 
 
+def unchanged(head_rows, rows):
+    """Return the unmuted head findings no new row stands for, which the branch's copy had too."""
+    new = Counter()
+    for row in rows:
+        if row["status"] == "new":
+            places = zip(row["files"], row.get("lines") or [0] * len(row["files"]), strict=False) \
+                if row.get("files") else [(row["file"], row["line"])]
+            new.update((row["rule"], row["subject"], file, line) for file, line in places)
+    there = []
+    for row in head_rows:
+        key = (row["rule"], row["subject"], row["file"], row["line"])
+        if row["muted"]:
+            continue
+        if new[key]:
+            new[key] -= 1
+        else:
+            there.append({**row, "status": "there", "count": 1})
+    return there
+
+
 def addon_result(head_tree, base_tree, folder, release):
     """Run the add-on check on the head and any base copy; return facts for the comment."""
     out = head_tree.parent.parent / f"out-{folder}"
@@ -288,6 +309,7 @@ def addon_result(head_tree, base_tree, folder, release):
             "head": totals(head_run), "base": totals(base_run) if base_run else None,
             "base_facts": report_facts(base_run, folder) if base_run else None,
             "rows": rows, "existing": existing(head_rows, rows) if base_run else [],
+            "there": unchanged(head_rows, rows) if base_run else [],
             "all": head_rows}
 
 
@@ -378,7 +400,7 @@ def pull_part(facts, rules):
     parts = [f"**{ADDON_WORDS['title']}** · the pull request into {plain(facts['branch'])}",
              verdict({"new": True, "version": ""}, rows, [], [], 0, ADDON_WORDS["noun"])]
     parts += [part for severity in SEVERITY_WORDS
-              if (part := severity_section(kinds, severity, rules, True, None, set()))]
+              if (part := severity_section(kinds, severity, rules, None, set()))]
     return "\n\n".join(parts)
 
 

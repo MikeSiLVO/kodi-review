@@ -180,6 +180,21 @@ class RenderTests(unittest.TestCase):
         text = addon.addon_text({"key": "run=1", "error": "the pull request targets leia"})
         self.assertEqual(text, "**Add-on check** · not checked: the pull request targets leia.")
 
+    def test_already_there_listed(self):
+        """Findings the branch's copy had too get severity sections with places, errors open."""
+        old = kdk_row("lang.code-unknown", "error", "no Kodi language is named prs",
+                      "resources/language/resource.language.prs")
+        new = kdk_row("addon.schema", "error", "bad element")
+        result = {**facts()["addons"][0], "rows": [new], "all": [old, new, {**new, "muted": True}]}
+        result["there"] = addon.unchanged(result["all"], result["rows"])
+        self.assertEqual([r["rule"] for r in result["there"]], ["lang.code-unknown"])
+        text = addon.addon_text(facts(addons=[result], pull=[]))
+        self.assertIn("1 new error. 1 already there before 1.2.0: 1 error.", text)
+        self.assertIn("<details open><summary>🔴 <b>1 error already there, 1 kind</b></summary>",
+                      text)
+        self.assertIn("| `no Kodi language is named prs` | 1 | "
+                      "`resources/language/resource.language.prs` 3 |", text)
+
     def test_report(self):
         """The report gives each add-on's counts and the pull request's findings."""
         text = addon.report_text(facts())
