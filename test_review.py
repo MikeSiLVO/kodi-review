@@ -972,7 +972,7 @@ class TriggerTests(unittest.TestCase):
 
     def run_trigger(self, comment, access: str | None = "write", asker="issue/5", mode="review",
                     posted=(), skins=(), source="mention", build="kdk=1 style=a", thread=None,
-                    told=()):
+                    told=(), addons=()):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
@@ -996,7 +996,10 @@ class TriggerTests(unittest.TestCase):
                          for sha in posted]
                         + [{"user": {"type": "Bot"},
                             "body": f"<!-- kodi-review skin sha={sha} kdk=1 style=a -->"}
-                           for sha in skins])
+                           for sha in skins]
+                        + [{"user": {"type": "Bot"},
+                            "body": f"<!-- kodi-review addon sha={sha} kdk=1 style=a -->"}
+                           for sha in addons])
             if path.endswith("/permission"):
                 if access is None:
                     refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
@@ -1007,6 +1010,7 @@ class TriggerTests(unittest.TestCase):
             return None
         with mock.patch.object(review, "request", side_effect=reply), \
                 mock.patch.object(review, "skin_build", return_value=build), \
+                mock.patch.object(review, "addon_build", return_value=build), \
                 mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode,
                                              "SOURCE": source}):
             try:
@@ -1159,6 +1163,52 @@ class TriggerTests(unittest.TestCase):
                 self.assertEqual(calls[-1], ("POST", "/repos/xbmc/repo-skins/issues/7/comments"))
             for body, mode in (("@kodi-review skin", "skin"), ("@kodi-review help", "help")):
                 self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+
+    def test_script_repos_take_only_the_addon_check_and_help(self):
+        """On repo-scripts a review, format or skin ask is refused and told why, even a writer's."""
+        with mock.patch.object(review, "REPO", "xbmc/repo-scripts"):
+            for body, mode in (("@kodi-review", "review"), ("@kodi-review format", "format"),
+                               ("@kodi-review skin", "skin")):
+                calls, code = self.run_trigger(self.comment(body=body), mode=mode)
+                self.assertIn("Only `@kodi-review addon`", str(code))
+                self.assertEqual("AI reviews coming soon!" in str(code), mode == "review", body)
+                self.assertEqual(calls[-1], ("POST", "/repos/xbmc/repo-scripts/issues/7/comments"))
+            for body, mode in (("@kodi-review addon", "addon"), ("@kodi-review help", "help")):
+                self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+
+    def test_anyone_may_ask_for_the_addon_check_once_per_head(self):
+        """An addon ask needs no write access and stops at a checked head; again needs write."""
+        ask = self.comment(body="@kodi-review addon")
+        with mock.patch.object(review, "REPO", "xbmc/repo-scripts"):
+            calls, code = self.run_trigger(ask, access="none", mode="addon", addons=["b" * 40])
+            self.assertIsNone(code)
+            self.assertFalse(any(path.endswith("/permission") for _, path in calls))
+            code = self.run_trigger(ask, access="none", mode="addon", addons=["a" * 40])[1]
+            self.assertIn("Already checked at `aaaaaaaaaaaa`", str(code))
+            again = self.comment(body="@kodi-review addon again")
+            self.assertIsNone(self.run_trigger(again, mode="addon", addons=["a" * 40])[1])
+            code = self.run_trigger(again, access="none", mode="addon", addons=["a" * 40])[1]
+            self.assertIn("`addon again` needs write access", str(code))
+
+    def test_addon_ask_elsewhere_is_refused(self):
+        """An addon ask outside repo-scripts, refused by the relay, is told where it runs."""
+        with mock.patch.object(review, "tell") as tell:
+            code = self.run_trigger(self.comment(body="@kodi-review addon"), mode="refuse")[1]
+        self.assertEqual(code, 0)
+        self.assertEqual(tell.call_args.args,
+                         ("addon-repo", "The add-on check runs on repo-scripts pull requests."))
+
+    def test_script_repos_get_their_own_command_list(self):
+        """On repo-scripts help lists only the addon ask and help, the addon ask linked."""
+        body = review.SCRIPT_HELP_FILE.read_text().strip()
+        self.assertNotIn("skin", body)
+        self.assertIn("#add-on-check)", body)
+        with mock.patch.object(review, "REPO", "xbmc/repo-scripts"), \
+                mock.patch.object(review, "request") as req, \
+                mock.patch.dict(os.environ, {"COMMENT": "issue/5", "FORK_PR": "2963"}):
+            review.cmd_help()
+        self.assertEqual(req.call_args.args,
+                         ("POST", "/repos/xbmc/repo-scripts/issues/2963/comments", {"body": body}))
 
     def test_line_comment_is_read_from_pulls(self):
         """A line comment is read from the pull request comments and passes."""

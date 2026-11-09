@@ -45,9 +45,7 @@ and a reply that only agrees or says a fix is coming gets a 👍.
 
 ## Help
 
-`@kodi-review help` alone posts the commands that work in that repository, from `HELP.md`, or
-`HELP_SKINS.md` on repo-skins, in the same thread or the main conversation. The other commands
-each link to their section here. Anyone can ask.
+`@kodi-review help` alone posts the commands that work in that repository, from `HELP.md`, `HELP_SKINS.md` on repo-skins or `HELP_SCRIPTS.md` on repo-scripts, in the same thread or the main conversation. The other commands each link to their section here. Anyone can ask.
 
 ## When nothing runs
 
@@ -84,6 +82,12 @@ push without anyone asking, and gets no comment when the check doesn't cover it.
 pull request has a skin check, each push gets a new one. Each new check hides the last one.
 Omega and Piers skins are checked; master counts as Piers while their xbmc.gui versions match.
 
+## Add-on check
+
+On xbmc/repo-scripts every pull request gets an add-on check when it opens and after each push, and `@kodi-review addon` alone asks for one. It runs the add-on checker in [kdk](https://github.com/MikeSiLVO/kdk) on the add-on folder for the target branch, Matrix to Piers, and compares it with the copy already on that branch. It covers what the Kodi repo's addon-checker reports and what reviewers there usually ask for: addon.xml, dependencies, files, languages and translations, string ids, license, artwork and the Python code's use of the Kodi API. The bot adds the pull request's own rules: one add-on folder in one commit, a commit subject and title reading `[<id>] <version>`, addon.xml links that don't open, and a changed provider or submitter.
+
+The comment has the skin check's layout: a line of counts, then the new errors, warnings and hints, then what was fixed, then the findings already there before, in the same sections with their places and errors open. Anyone can ask, since no model runs. A commit already checked is checked again only after the bot's checks are updated; `again` on the asking line checks it anyway and needs write access. Each new check hides the last one. A pull request to Leia or older is not checked.
+
 ## Files
 
 | File | What it is |
@@ -97,6 +101,8 @@ Omega and Piers skins are checked; master counts as Piers while their xbmc.gui v
 | `test_review.py` | Offline tests: `python3 -m unittest test_review` |
 | `skin.py` | Fetches the skin, runs kdk in its sandbox, posts the skin check |
 | `test_skin.py` | Offline tests: `python3 -m unittest test_skin` |
+| `addon.py` | Fetches the add-on and its copy on the branch, runs kdk's add-on check in its sandbox, adds the pull request's own rules, posts the add-on check |
+| `test_addon.py` | Offline tests: `python3 -m unittest test_addon` |
 | `kdkcheck.py` | Tries a kdk build on pinned real skins through the skin check and diffs it with the last run: `python3 kdkcheck.py` |
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |

@@ -245,7 +245,7 @@ test("a skin repo pull request asks for a skin check when opened, reopened or pu
   assert.equal(await followUp("pull_request", payload("opened"), repos, none), null);
 });
 
-test("a script repo pull request asks for an add-on check, and any mention there is refused",
+test("a script repo pull request asks for an add-on check, and takes only addon and help",
   async () => {
     const repos = ["xbmc/repo-scripts"];
     const payload = (action) => ({ action, repository: { full_name: "xbmc/repo-scripts" },
@@ -257,13 +257,19 @@ test("a script repo pull request asks for an add-on check, and any mention there
     }
     assert.equal(await followUp("pull_request", payload("labeled"), repos, lookup({}), [],
       repos), null);
-    for (const body of ["@kodi-review review", "@kodi-review help", "@kodi-review skin"]) {
-      const asked = trigger("issue_comment", issueComment({
-        repository: { full_name: "xbmc/repo-scripts" },
-        comment: { id: 5, body, author_association: "MEMBER", user: { type: "User" } } }),
-        repos, [], repos);
-      assert.equal(asked.mode, "refuse", body);
+    const ask = (body, association = "MEMBER", repo = "xbmc/repo-scripts") => trigger(
+      "issue_comment", issueComment({ repository: { full_name: repo },
+        comment: { id: 5, body, author_association: association, user: { type: "User" } } }),
+      [...repos, "xbmc/xbmc"], [], repos).mode;
+    assert.equal(ask("@kodi-review addon"), "addon");
+    assert.equal(ask("@kodi-review addon again"), "addon");
+    assert.equal(ask("@kodi-review addon", "NONE"), "addon");
+    assert.equal(ask("@kodi-review addon again", "NONE"), "refuse");
+    assert.equal(ask("@kodi-review help", "NONE"), "help");
+    for (const body of ["@kodi-review review", "@kodi-review skin", "what does this do @kodi-review"]) {
+      assert.equal(ask(body), "refuse", body);
     }
+    assert.equal(ask("@kodi-review addon", "MEMBER", "xbmc/xbmc"), "refuse");
   });
 
 test("a skin repo pull request opening dispatches a skin check", async (t) => {

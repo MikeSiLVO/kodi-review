@@ -3,6 +3,7 @@ const REVIEW_ASK = /^[\s,:.!]*(?:review\b|$)/i;
 const FORMAT_ASK = /^[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$/i;
 const HELP_ASK = /^[\s,:.!]*help[\s,:.!?]*$/i;
 const SKIN_ASK = /^[\s,:.!]*skin\b/i;
+const ADDON_ASK = /^[\s,:.!]*addon\b/i;
 const AGAIN = /\bagain\b/i;
 const QUOTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|<!--[\s\S]*?-->|^[ \t]*>[^\n]*/gm;
 
@@ -11,8 +12,9 @@ export function spoken(body) {
   return body.replace(QUOTED, " ");
 }
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
-const OPEN_MODES = new Set(["format", "skin", "help"]);
+const OPEN_MODES = new Set(["format", "skin", "addon", "help"]);
 const SKIN_REPO_MODES = new Set(["skin", "help"]);
+const SCRIPT_REPO_MODES = new Set(["addon", "help"]);
 const CHECK_ACTIONS = new Set(["opened", "reopened", "synchronize"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
@@ -46,11 +48,13 @@ export function trigger(event, payload, allowed, skinRepos = [], scriptRepos = [
   const after = words.slice(at + "@kodi-review".length);
   const mode = words.slice(0, at).trim() ? "answer" : FORMAT_ASK.test(after) ? "format"
     : HELP_ASK.test(after) ? "help" : SKIN_ASK.test(after) ? "skin"
-    : REVIEW_ASK.test(after) ? "review" : "answer";
+    : ADDON_ASK.test(after) ? "addon" : REVIEW_ASK.test(after) ? "review" : "answer";
   const repo = payload.repository.full_name;
   const skinRepo = skinRepos.includes(repo);
-  const again = mode === "skin" && AGAIN.test(after.split("\n", 1)[0]);
-  const refused = pr.state !== "open" || scriptRepos.includes(repo)
+  const scriptRepo = scriptRepos.includes(repo);
+  const again = (mode === "skin" || mode === "addon") && AGAIN.test(after.split("\n", 1)[0]);
+  const refused = pr.state !== "open"
+    || (scriptRepo ? onIssue || !SCRIPT_REPO_MODES.has(mode) : mode === "addon")
     || ((onIssue || skinRepo) && (!SKIN_REPO_MODES.has(mode) || !skinRepo))
     || ((!OPEN_MODES.has(mode) || again) && STRANGERS.has(comment.author_association));
   return { pr: String(pr.number), repo, comment: `${kind}/${comment.id}`,

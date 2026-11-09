@@ -64,6 +64,7 @@ FORMAT_CHAR_LIMIT = 20_000
 KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
 HELP_FILE = Path(__file__).resolve().parent / "HELP.md"
 SKIN_HELP_FILE = Path(__file__).resolve().parent / "HELP_SKINS.md"
+SCRIPT_HELP_FILE = Path(__file__).resolve().parent / "HELP_SCRIPTS.md"
 KNOWLEDGE_LIMIT = 38_000
 KNOWLEDGE_HEADER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 TITLE_TAG = re.compile(r"\[([^\]]+)\]")
@@ -138,6 +139,7 @@ REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
 HELP_ASK = re.compile(r"[\s,:.!]*help[\s,:.!?]*$", re.I)
 SKIN_ASK = re.compile(r"[\s,:.!]*skin\b", re.I)
+ADDON_ASK = re.compile(r"[\s,:.!]*addon\b", re.I)
 AGAIN = re.compile(r"\bagain\b", re.I)
 QUOTE_LIMIT = 4000
 PRELOADED = ("question.md", "pr.json", "status.json", "prior.json", "discussion.md", "piers.txt",
@@ -1576,6 +1578,8 @@ def cmd_trigger():
             asked = "help"
         elif SKIN_ASK.match(body, mention.end()):
             asked = "skin"
+        elif ADDON_ASK.match(body, mention.end()):
+            asked = "addon"
         elif REVIEW_ASK.match(body, mention.end()):
             asked = "review"
     mode = os.environ.get("MODE", "review")
@@ -1587,20 +1591,25 @@ def cmd_trigger():
             refuse("closed", "This is closed, so I won't run anything here.")
         if "pull_request" not in thread and REPO not in SKIN_REPOS:
             refuse("issue", "I only run on pull requests here.")
-    if REPO in SCRIPT_REPOS:
-        refuse("script-repo", "The add-on check runs on its own on every push here; mentions run "
-               "nothing on this repository.")
+    if REPO in SCRIPT_REPOS and asked not in ("addon", "help"):
+        ai = asked in ("review", "answer")
+        refuse("script-repo ai" if ai else "script-repo",
+               "Only `@kodi-review addon` and `@kodi-review help` run on this repository."
+               + (" AI reviews coming soon!" if ai else ""))
+    if asked == "addon" and REPO not in SCRIPT_REPOS:
+        refuse("addon-repo", "The add-on check runs on repo-scripts pull requests.")
     if REPO in SKIN_REPOS and asked not in ("skin", "help"):
         refuse("skin-repo",
                "Only `@kodi-review skin` and `@kodi-review help` run on this repository.")
-    again = asked == "skin" and asks_again(comment.get("body") or "")
-    if asked == "skin" and not again:
+    again = asked in ("skin", "addon") and asks_again(comment.get("body") or "")
+    if asked in ("skin", "addon") and not again:
         if os.environ.get("SOURCE") != "issue":
             head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
-            build = skin_build()
+            build, posted, marker = ((skin_build(), skin_comments(), SKIN_MARKER) if asked == "skin"
+                                     else (addon_build(), addon_comments(), ADDON_MARKER))
             if any(m[2] == head and m[3].strip() == build
-                   for c in skin_comments() if (m := SKIN_MARKER.match(c["body"]))):
-                refuse(f"skin sha={head} {build}",
+                   for c in posted if (m := marker.match(c["body"]))):
+                refuse(f"{asked} sha={head} {build}",
                        f"Already checked at `{head[:12]}`, and my checks haven't changed since.")
     elif asked == "format":
         head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
@@ -1618,7 +1627,7 @@ def cmd_trigger():
             sys.exit(f"{login} has {access} access; a reply needs write access to be answered.")
         if access not in CAN_ASK:
             print(f"{login} has {access} access.")
-            needs = ("`skin again` needs" if again else "Reviews need" if asked == "review"
+            needs = (f"`{asked} again` needs" if again else "Reviews need" if asked == "review"
                      else "Questions need")
             refuse(f"access {'again' if again else asked}",
                    f"{needs} write access. `@kodi-review help` lists what anyone can ask.")
@@ -1721,7 +1730,8 @@ def cmd_help():
     """Post this repo's list of commands where help was asked: in its thread or the conversation."""
     kind, number = asking_comment()
     pr = os.environ["FORK_PR"]
-    body = (SKIN_HELP_FILE if REPO in SKIN_REPOS else HELP_FILE).read_text().strip()
+    body = (SCRIPT_HELP_FILE if REPO in SCRIPT_REPOS else SKIN_HELP_FILE if REPO in SKIN_REPOS
+            else HELP_FILE).read_text().strip()
     if kind == "review":
         request("POST", f"/repos/{REPO}/pulls/{pr}/comments/{number}/replies", {"body": body})
     else:
