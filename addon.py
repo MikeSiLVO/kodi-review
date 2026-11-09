@@ -51,6 +51,14 @@ BROWSER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, lik
 RELEASE_TITLE = re.compile(r"\[([^\]\s@]+)(?:@([a-z]+))?\] v?(\S+)")
 PULL_CHECK = "Pull request"
 LINK_CHECK = "Links"
+PYTHONS = {"matrix": "3.8", "nexus": "3.8", "omega": "3.8",
+           "piers": "3.14 in Kodi's own builds; Linux distro builds use the distro's Python"}
+LEFT_OUT = re.compile(r"\.(po|pot|png|jpe?g|gif|webp|bmp|ico|tiff?|svg|ttf|otf|woff2?|zip|gz|7z|"
+                      r"rar|mp3|mp4|mkv|ogg|wav|flac|db|sqlite|so|dll|dylib|exe|pyc|pyo|xbt)$",
+                      re.I)
+DIFF_SECTION = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.M)
+PATHS_LISTED = 40
+FACTS_FILE = Path(__file__).resolve().parent / "ADDON_FACTS.md"
 
 
 def bot_row(check, rule, severity, message, file=""):
@@ -320,7 +328,7 @@ def addon_result(head_tree, base_tree, folder, release):
             if not (r["status"] == "fixed" and r["rule"] in RELEASED_RULES)]
     head_rows = findings(head_run)
     return {**report_facts(head_run, folder), "folder": folder, "release": release,
-            "kdk": head_run.get("kdk_version", ""),
+            "bundled": head_run.get("bundled") or [], "kdk": head_run.get("kdk_version", ""),
             "checker": head_run.get("addoncheck_version", ""),
             "notices": head_run.get("notices") or [], "new": base_run is None,
             "head": totals(head_run), "base": totals(base_run) if base_run else None,
@@ -498,7 +506,121 @@ def cmd_post():
         sys.exit(1)
 
 
-COMMANDS = {"check": cmd_check, "render": cmd_render, "post": cmd_post}
+def left_out(path, bundled):
+    """Whether the review diff leaves a file out: translations, binaries and bundled code."""
+    return bool(LEFT_OUT.search(path)) or any(path.startswith(root) for root in bundled)
+
+
+def review_diff(diff, folder, bundled):
+    """Split a diff into the sections the model reads and the paths left out of it."""
+    roots = [f"{folder}/{root}" for root in bundled]
+    starts = [m.start() for m in DIFF_SECTION.finditer(diff)] + [len(diff)]
+    kept, dropped = [], []
+    for start, end in zip(starts, starts[1:], strict=False):
+        section = diff[start:end]
+        header = DIFF_SECTION.match(section)
+        path = header[2] if header else ""
+        binary = "\nBinary files " in section or "\nGIT binary patch" in section
+        (dropped if binary or left_out(path, roots) else kept).append((path, section))
+    return "".join(s for _, s in kept), sorted(p for p, _ in dropped)
+
+
+def manifest(path):
+    """Return an addon.xml's name, extension points with their files and imports, or none."""
+    try:
+        data = path.read_bytes()[:ADDON_XML_LIMIT]
+        if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+            return None
+        root = ET.fromstring(data)
+    except (OSError, ET.ParseError):
+        return None
+    points = [(e.get("point", ""), e.get("library", "")) for e in root.iter("extension")
+              if e.get("point") not in METADATA_POINTS]
+    imports = [(i.get("addon", ""), i.get("version", ""), i.get("optional") == "true")
+               for i in root.iter("import")]
+    return {"name": root.get("name", ""), "points": points, "imports": imports}
+
+
+def addon_facts_text(result, branch, head_tree, dropped, copies):
+    """Format addon.md: the add-on's facts and what full.diff leaves out."""
+    folder = result["folder"]
+    info = manifest(head_tree / folder / "addon.xml") or {"name": "", "points": [], "imports": []}
+    base = result.get("base_facts")
+    target = f"{branch}, {RELEASES.get(branch, branch)}, Python {PYTHONS.get(branch, '?')}"
+    lines = [f"# {info['name'] or folder} ({result['id']}) {result['version']}", "",
+             f"- Target: {target}",
+             f"- Provider: {result.get('provider') or 'not given'}",
+             ("- Update of version " + (base.get("version") or "?") + f" on {branch}") if base
+             else "- New to this branch"]
+    lines += [f"- Newer branch {name}: " + ("has its own copy" if own else "has no copy, so its "
+              "Kodi gets this one") for name, own in copies.items()]
+    lines += ["", "Extension points:"]
+    lines += [f"- {point}" + (f": {library}" if library else "")
+              for point, library in info["points"]]
+    lines += ["", "Imports:"]
+    lines += [f"- {name} {version}" + (" (optional)" if optional else "")
+              for name, version, optional in info["imports"]]
+    if result.get("bundled"):
+        lines += ["", "Bundled third-party code, left out of full.diff:"]
+        lines += [f"- {folder}/{root}" for root in result["bundled"]]
+    if dropped:
+        lines += ["", f"Left out of full.diff ({len(dropped)}):"]
+        lines += [f"- {path}" for path in dropped[:PATHS_LISTED]]
+        if len(dropped) > PATHS_LISTED:
+            lines.append(f"- and {len(dropped) - PATHS_LISTED} more")
+    return "\n".join(lines) + "\n"
+
+
+def checks_text(result):
+    """Format checks.md: every finding the add-on check reports on the head, new or not."""
+    rows = [r for r in result["rows"] if r["status"] == "new"] + result.get("there", [])
+    lines = ["# What the add-on check reports", "",
+             "Posted in its own comment. Never report these again, or anything of their kinds.", ""]
+    for row in sorted(rows, key=lambda r: (list(SEVERITY_WORDS).index(r["severity"])
+                                           if r["severity"] in SEVERITY_WORDS else 9,
+                                           r["file"], r["line"])):
+        where = "/".join(p for p in (result["folder"], row["file"]) if p)
+        where += f":{row['line']}" if row["line"] else ""
+        message = " ".join(row["message"].split())
+        lines.append(f"- {row['severity']} {row['rule']} {where}: {message}")
+    if len(lines) == 4:
+        lines.append("Nothing: the add-on check found no problems.")
+    return "\n".join(lines) + "\n"
+
+
+def cmd_prep():
+    """Write the AI review's add-on inputs: addon.md, full.diff, checks.md and knowledge.md."""
+    folder, branch = os.environ["ADDON_FOLDER"], os.environ["BASE_REF"]
+    head, base = os.environ["HEAD_SHA"], os.environ["BASE_SHA"]
+    scratch = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "addon"
+    RUN_DIR.mkdir(exist_ok=True)
+    (RUN_DIR / "knowledge.md").write_text(FACTS_FILE.read_text())
+    index = scratch / "index"
+    fetch_indexes(index)
+    copies = own_copies(folder, branch)
+    (index / "copies.json").write_text(json.dumps(copies))
+    head_tree, base_tree = scratch / "head" / folder, scratch / "base" / folder
+    has_base = addon_tree(base, folder, base_tree, index)
+    if not addon_tree(head, folder, head_tree, index):
+        raise SystemExit(f"{folder} is not in the head commit")
+    try:
+        check_sandbox(scratch / "probe")
+        result = addon_result(head_tree, base_tree if has_base else None, folder, branch)
+        (RUN_DIR / "checks.md").write_text(checks_text(result))
+    except (SkinError, subprocess.CalledProcessError, OSError, ValueError) as err:
+        print(f"The add-on check did not run: {err!r}")
+        result = {**report_facts({}, folder), "folder": folder, "bundled": [],
+                  "base_facts": {"version": ""} if has_base else None}
+        (RUN_DIR / "checks.md").write_text("# What the add-on check reports\n\nIt could not run "
+                                           "here; its own comment on the pull request has it.\n")
+    raw = RUN_DIR / "raw.diff"
+    diff, dropped = review_diff(raw.read_text(errors="replace"), folder, result["bundled"])
+    raw.unlink()
+    (RUN_DIR / "full.diff").write_text(diff)
+    (RUN_DIR / "addon.md").write_text(addon_facts_text(result, branch, head_tree, dropped, copies))
+
+
+COMMANDS = {"check": cmd_check, "render": cmd_render, "post": cmd_post, "prep": cmd_prep}
 
 if __name__ == "__main__":
     COMMANDS[sys.argv[1]]()

@@ -222,5 +222,63 @@ class RenderTests(unittest.TestCase):
         self.assertIn("### Pull request (1)", text)
 
 
+def section(path, body="@@ -0,0 +1 @@\n+x\n"):
+    """Return one file's section of a git diff."""
+    return f"diff --git a/{path} b/{path}\nindex 0..1 100644\n--- a/{path}\n+++ b/{path}\n{body}"
+
+
+class PrepTests(unittest.TestCase):
+    """The AI review's add-on inputs: the filtered diff, the facts and the check's findings."""
+
+    def test_diff_leaves_out_translations_binaries_and_bundled_code(self):
+        """PO files, images, binary patches and bundled folders drop out and are listed."""
+        diff = "".join([section("script.test/default.py"),
+                        section("script.test/resources/language/resource.language.de_de/strings.po"),
+                        section("script.test/icon.png"),
+                        section("script.test/data.bin", "Binary files a/x and b/x differ\n"),
+                        section("script.test/resources/lib/requests/api.py"),
+                        section("script.test/resources/lib/main.py")])
+        kept, dropped = addon.review_diff(diff, "script.test", ["resources/lib/requests/"])
+        self.assertEqual(addon.DIFF_SECTION.findall(kept),
+                         [("script.test/default.py", "script.test/default.py"),
+                          ("script.test/resources/lib/main.py",
+                           "script.test/resources/lib/main.py")])
+        self.assertEqual(dropped, ["script.test/data.bin", "script.test/icon.png",
+                                   "script.test/resources/language/resource.language.de_de/"
+                                   "strings.po", "script.test/resources/lib/requests/api.py"])
+
+    def test_facts_name_target_update_and_left_out_files(self):
+        """Facts file names target, Python, replaced version, newer copies and extension points."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "script.test").mkdir()
+            (tree / "script.test" / "addon.xml").write_text(
+                '<addon id="script.test" name="Test" version="1.2.0"><requires>'
+                '<import addon="xbmc.python" version="3.0.1"/></requires>'
+                '<extension point="xbmc.service" library="service.py"/>'
+                '<extension point="xbmc.addon.metadata"/></addon>')
+            result = {**ADDON, "folder": "script.test", "bundled": [],
+                      "base_facts": {"version": "1.1.0"}}
+            text = addon.addon_facts_text(result, "omega", tree, ["script.test/icon.png"],
+                                          {"piers": False})
+        self.assertIn("- Target: omega, Kodi 21 (Omega), Python 3.8", text)
+        self.assertIn("- Update of version 1.1.0 on omega", text)
+        self.assertIn("- Newer branch piers: has no copy, so its Kodi gets this one", text)
+        self.assertIn("- xbmc.service: service.py", text)
+        self.assertIn("- xbmc.python 3.0.1", text)
+        self.assertIn("Left out of full.diff (1):\n- script.test/icon.png", text)
+
+    def test_checks_list_new_and_old_findings_from_the_repo_root(self):
+        """The checks file lists new and already-there findings, errors first, one line each."""
+        new = kdk_row("addon.schema", "warning", "bad\nelement")
+        old = {**kdk_row("lang.code-unknown", "error", "no language prs", "resources/x"),
+               "status": "there"}
+        text = addon.checks_text({"folder": "script.test", "rows": [new], "there": [old]})
+        self.assertIn("- error lang.code-unknown script.test/resources/x:3: no language prs\n"
+                      "- warning addon.schema script.test/addon.xml:3: bad element", text)
+        empty = addon.checks_text({"folder": "script.test", "rows": [], "there": []})
+        self.assertIn("Nothing: the add-on check found no problems.", empty)
+
+
 if __name__ == "__main__":
     unittest.main()

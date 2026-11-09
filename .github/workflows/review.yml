@@ -60,6 +60,7 @@ env:
   ALLOWED_REPOS: >-
     xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins
     xbmc/repo-scripts MikeSiLVO/repo-scripts
+  SCRIPT_REPOS: xbmc/repo-scripts MikeSiLVO/repo-scripts
 
 jobs:
   trigger:
@@ -161,6 +162,12 @@ jobs:
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          if [[ " $SCRIPT_REPOS " == *" $UPSTREAM "* ]]; then
+            folder=$(gh api --paginate "repos/$UPSTREAM/pulls/$UPSTREAM_PR/files" --jq '.[].filename' \
+              | awk -F/ 'NF > 1 && $1 !~ /^\./ { print $1 }' | sort -u | head -1)
+            [[ "$folder" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "No add-on folder in PR $UPSTREAM_PR"; exit 1; }
+            echo "folder=$folder" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check out the pull request code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,6 +176,8 @@ jobs:
           ref: ${{ steps.refs.outputs.head_sha }}
           fetch-depth: 1
           persist-credentials: false
+          sparse-checkout: ${{ steps.refs.outputs.folder }}
+          filter: ${{ steps.refs.outputs.folder && 'blob:none' || '' }}
 
       - name: Remove agent config from the pull request code
         run: |
@@ -183,27 +192,53 @@ jobs:
           path: .kodi-review-bot
           persist-credentials: false
 
+      - name: Install kdk for the add-on review
+        if: steps.refs.outputs.folder != '' && env.MODE != 'format'
+        run: |
+          (cd "$BOT/vendor" && sha256sum -c --quiet SHA256SUMS)
+          sudo dpkg-deb -x "$BOT"/vendor/bubblewrap_*.deb /
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+            sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          python3 -m venv "$RUNNER_TEMP/kdk"
+          "$RUNNER_TEMP/kdk/bin/pip" install -q --no-index --no-deps "$BOT"/vendor/kdk/*.whl
+          echo "KDK_PYTHON=$RUNNER_TEMP/kdk/bin/python" >> "$GITHUB_ENV"
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+        id: kdk
+
+      - name: Cache today's add-on indexes
+        if: steps.kdk.outcome == 'success'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/addon/index
+          key: addon-index-${{ steps.kdk.outputs.day }}
+
       - name: Prepare the review inputs
         id: prep
         env:
           HEAD_SHA: ${{ steps.refs.outputs.head_sha }}
           BASE_SHA: ${{ steps.refs.outputs.base_sha }}
           BASE_REF: ${{ steps.refs.outputs.base_ref }}
+          ADDON_FOLDER: ${{ steps.refs.outputs.folder }}
         run: |
           set -euo pipefail
           mkdir -p .kodi-review-run
           if [ "$MODE" = format ]; then echo "prepared=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           python3 "$BOT/review.py" pr
           if [ "$MODE" = answer ]; then python3 "$BOT/review.py" question; fi
+          limit=()
+          if [ -n "$ADDON_FOLDER" ]; then limit=(-- "$ADDON_FOLDER"); fi
           if [ -z "$REPLAY_SHA" ]; then
-            python3 "$BOT/review.py" status || echo "Status unavailable"
-            original=$(jq -r '.backport.original // empty' .kodi-review-run/status.json || true)
-            if [ -n "$original" ]; then
-              gh api -H "Accept: application/vnd.github.diff" "repos/$UPSTREAM/pulls/$original" \
-                > .kodi-review-run/original.diff || rm -f .kodi-review-run/original.diff
+            if [ -z "$ADDON_FOLDER" ]; then
+              python3 "$BOT/review.py" status || echo "Status unavailable"
+              original=$(jq -r '.backport.original // empty' .kodi-review-run/status.json || true)
+              if [ -n "$original" ]; then
+                gh api -H "Accept: application/vnd.github.diff" "repos/$UPSTREAM/pulls/$original" \
+                  > .kodi-review-run/original.diff || rm -f .kodi-review-run/original.diff
+              fi
+              gh pr diff "$UPSTREAM_PR" --repo "$UPSTREAM" > .kodi-review-run/full.diff
             fi
             python3 "$BOT/review.py" discussion || echo "Discussion unavailable"
-            gh pr diff "$UPSTREAM_PR" --repo "$UPSTREAM" > .kodi-review-run/full.diff
             prev=$(python3 "$BOT/review.py" prev)
             python3 "$BOT/review.py" prior || echo "Earlier findings unavailable"
             if [[ "$prev" =~ ^[0-9a-f]{40}$ ]] && [ "$prev" != "$HEAD_SHA" ]; then
@@ -211,30 +246,43 @@ jobs:
                 --jq .merge_base_commit.sha || true)
               # last review's change on current base; its commit may be rebased or force-pushed away
               if [ -n "$prev_base" ] \
-                  && git fetch -q --no-tags --depth=1 origin "$prev" "$prev_base" "$BASE_SHA" \
+                  && git fetch -q --no-tags --depth=1 ${ADDON_FOLDER:+--filter=blob:none} origin \
+                    "$prev" "$prev_base" "$BASE_SHA" \
                   && was=$(git merge-tree --write-tree --merge-base="$prev_base" "$BASE_SHA" \
                     "$prev"); then
-                git diff "$was" "$HEAD_SHA" > .kodi-review-run/new.diff \
+                git diff "$was" "$HEAD_SHA" "${limit[@]}" > .kodi-review-run/new.diff \
                   || rm -f .kodi-review-run/new.diff
               fi
             fi
-          else
+          elif [ -z "$ADDON_FOLDER" ]; then
             gh api -H "Accept: application/vnd.github.diff" \
               "repos/$UPSTREAM/compare/$BASE_SHA...$HEAD_SHA" > .kodi-review-run/full.diff
           fi
-          for rules in AGENTS.md docs/CODE_GUIDELINES.md; do
-            out=".kodi-review-run/$(basename "$rules")"
-            gh api -H "Accept: application/vnd.github.raw" \
-              "repos/$UPSTREAM/contents/$rules?ref=$BASE_SHA" > "$out" || rm -f "$out"
-          done
-          python3 "$BOT/review.py" piers
-          python3 "$BOT/review.py" tests || echo "Tests unavailable"
-          python3 "$BOT/review.py" knowledge || echo "Knowledge unavailable"
-          if [ "$MODE" = answer ]; then
+          if [ -n "$ADDON_FOLDER" ]; then
+            git fetch -q --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA"
+            git diff "$BASE_SHA" "$HEAD_SHA" "${limit[@]}" > .kodi-review-run/raw.diff
+            python3 "$BOT/addon.py" prep
+            cp "$BOT/ADDON.md" "$RUNNER_TEMP/instructions.md"
+            schema=$(jq -c 'del(.properties.kodi22, .properties.kodi22_reason)
+              | .required -= ["kodi22", "kodi22_reason"]' "$BOT/schema.json")
+            echo "schema=$schema" >> "$GITHUB_OUTPUT"
+            echo "task=Review" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "$ADDON_FOLDER" ]; then
+            for rules in AGENTS.md docs/CODE_GUIDELINES.md; do
+              out=".kodi-review-run/$(basename "$rules")"
+              gh api -H "Accept: application/vnd.github.raw" \
+                "repos/$UPSTREAM/contents/$rules?ref=$BASE_SHA" > "$out" || rm -f "$out"
+            done
+            python3 "$BOT/review.py" piers
+            python3 "$BOT/review.py" tests || echo "Tests unavailable"
+            python3 "$BOT/review.py" knowledge || echo "Knowledge unavailable"
+          fi
+          if [ -z "$ADDON_FOLDER" ] && [ "$MODE" = answer ]; then
             cat "$BOT/ANSWER.md" "$BOT/REVIEW.md" > "$RUNNER_TEMP/instructions.md"
             echo "schema=$(jq -c . "$BOT/answer.json")" >> "$GITHUB_OUTPUT"
             echo "task=Answer the question in question.md about" >> "$GITHUB_OUTPUT"
-          else
+          elif [ -z "$ADDON_FOLDER" ]; then
             python3 "$BOT/review.py" touches || echo "Touches unavailable"
             cp "$BOT/REVIEW.md" "$RUNNER_TEMP/instructions.md"
             echo "schema=$(jq -c . "$BOT/schema.json")" >> "$GITHUB_OUTPUT"
@@ -318,7 +366,9 @@ jobs:
         run: python3 "$BOT/review.py" usage "$EXECUTION_FILE" || true
 
       - name: Check the formatting
-        if: always() && steps.prep.outcome == 'success' && env.MODE != 'answer'
+        if: >-
+          always() && steps.prep.outcome == 'success' && env.MODE != 'answer'
+          && steps.refs.outputs.folder == ''
         env:
           HEAD_SHA: ${{ steps.refs.outputs.head_sha }}
           BASE_SHA: ${{ steps.refs.outputs.base_sha }}

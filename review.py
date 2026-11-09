@@ -959,9 +959,14 @@ def load_result():
         return None
     if isinstance(result, dict) and result.get("withheld") is True:
         return result
-    if not isinstance(result, dict) or any(key not in result for key in REQUIRED):
+    if not isinstance(result, dict) or any(key not in result for key in required()):
         return None
     return result
+
+
+def required():
+    """Return the result keys a review must have; repo-scripts reviews carry no Kodi 22 answer."""
+    return tuple(k for k in REQUIRED if REPO not in SCRIPT_REPOS or not k.startswith("kodi22"))
 
 
 def graphql(query, **variables):
@@ -1121,8 +1126,9 @@ def status_lines(status, result):
         lines.append(f"**Conflicts:** yes, needs a rebase onto {status['base']}")
     if status.get("label_problems"):
         lines.append("**Labels:** " + ", ".join(status["label_problems"]))
-    lines.append(f"**Kodi 22:** {result['kodi22']}. {result['kodi22_reason']}"
-                 + backport_text(status.get("backport")))
+    if "kodi22" in result:
+        lines.append(f"**Kodi 22:** {result['kodi22']}. {result['kodi22_reason']}"
+                     + backport_text(status.get("backport")))
     patch = "The author applies the formatting patch above. " if (
         status.get("format") or {}).get("commits") else ""
     lines.append(f"**Next:** {patch}{result['next_step']}")
@@ -1765,7 +1771,7 @@ def cmd_render():
     if isinstance(result, dict) and result.get("withheld") is True:
         print(WITHHELD)
         return
-    if not isinstance(result, dict) or any(key not in result for key in REQUIRED):
+    if not isinstance(result, dict) or any(key not in result for key in required()):
         print("The review did not finish.")
         return
     _, loose = place_findings(result["findings"], {})
