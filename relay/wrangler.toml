@@ -6,5 +6,6 @@ routes = [{ pattern = "kodi-review.silvo.cc", custom_domain = true }]
 
 [vars]
 BOT_REPO = "MikeSiLVO/kodi-review"
-ALLOWED_REPOS = "xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins"
+ALLOWED_REPOS = "xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins xbmc/repo-scripts MikeSiLVO/repo-scripts"
 SKIN_REPOS = "xbmc/repo-skins MikeSiLVO/repo-skins"
+SCRIPT_REPOS = "xbmc/repo-scripts MikeSiLVO/repo-scripts"
