@@ -897,7 +897,22 @@ def claim_text(body):
     return re.sub(r"\n{3,}", "\n\n", body).strip()[:CLAIM_LIMIT]
 
 
-def discussion_text(comments):
+def team_logins(comments):
+    """Return the commenters with write access upstream, skipping any whose lookup fails."""
+    people = {c["user"]["login"] for c in comments
+              if (c.get("user") or {}).get("type") == "User" and c["user"].get("login")}
+    team = set()
+    for login in sorted(people):
+        try:
+            access = request("GET", f"/repos/{UPSTREAM}/collaborators/{login}/permission")
+        except urllib.error.URLError:
+            continue
+        if access.get("permission") in CAN_ASK:
+            team.add(login)
+    return team
+
+
+def discussion_text(comments, team=None):
     """Format people's comments, comments they replied to and other bots' claims, newest first."""
     by_id = {c["id"]: c for c in comments}
     kept = {c["id"]: c for c in comments
@@ -918,7 +933,7 @@ def discussion_text(comments):
             login, body = login + CLAIM_LABEL, claim_text(body)
         elif login == BOT_LOGIN:
             login += OWN_LABEL
-        elif c.get("author_association") in ("MEMBER", "OWNER"):
+        elif login in (team or ()) or c.get("author_association") in ("MEMBER", "OWNER"):
             login += TEAM_LABEL
         entry = f"{login}, {c['created_at'][:10]}{where}\n{body}\n"
         if size + len(entry) > DISCUSSION_LIMIT:
@@ -938,7 +953,7 @@ def cmd_discussion():
     comments = list(paged(f"/repos/{UPSTREAM}/issues/{number}/comments"))
     comments += paged(f"/repos/{UPSTREAM}/pulls/{number}/comments")
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "discussion.md").write_text(discussion_text(comments))
+    (RUN_DIR / "discussion.md").write_text(discussion_text(comments, team_logins(comments)))
 
 
 def attachable_lines(patch):

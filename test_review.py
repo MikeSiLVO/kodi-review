@@ -723,11 +723,13 @@ class DiscussionTests(unittest.TestCase):
             self.comment(6, "dev", "User", "2026-01-06T00:00:00Z", "Fixing.", "c.cpp", 5),
             self.comment(7, "lead", "User", "2026-01-07T00:00:00Z", "Make it opt-in.",
                          association="MEMBER"),
+            self.comment(8, "merger", "User", "2026-01-08T00:00:00Z", "Bump the version."),
         ]
         claim, own, team = review.CLAIM_LABEL, review.OWN_LABEL, review.TEAM_LABEL
-        self.assertEqual(review.discussion_text(comments),
+        self.assertEqual(review.discussion_text(comments, {"merger"}),
                          "Newest first. Each entry: login, date, and file:line for a line "
                          "comment.\n\n"
+                         f"merger{team}, 2026-01-08\nBump the version.\n\n"
                          f"lead{team}, 2026-01-07\nMake it opt-in.\n\n"
                          f"dev, 2026-01-06, c.cpp:7, replying to {review.BOT_LOGIN}\nFixing.\n\n"
                          f"{review.BOT_LOGIN}{own}, 2026-01-05, c.cpp:7\n**Minor: Ours**\n\n"
@@ -749,6 +751,22 @@ class DiscussionTests(unittest.TestCase):
                          "Old.\n\n✅ Confirmed as addressed by @dev", "a.cpp")]
         self.assertEqual(review.discussion_text(comments).split("\n\n", 1)[1],
                          f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
+
+    def test_team_by_write_access(self):
+        """People with write or admin access are team; read access, refusals and bots are not."""
+        def permission(method, path, body=None, raw=False):
+            """Answer the collaborator permission lookup for each login."""
+            login = path.split("/")[-2]
+            if login == "gone":
+                raise urllib.error.HTTPError(path, 404, "Not Found", Message(), None)
+            return {"permission": {"lead": "admin", "merger": "write"}.get(login, "read")}
+        comments = [self.comment(i, user, kind, "2026-01-01T00:00:00Z", "x")
+                    for i, (user, kind) in enumerate([("lead", "User"), ("merger", "User"),
+                                                      ("dev", "User"), ("gone", "User"),
+                                                      ("rabbit", "Bot"), ("merger", "User")])]
+        with mock.patch.object(review, "request", side_effect=permission) as request:
+            self.assertEqual(review.team_logins(comments), {"lead", "merger"})
+        self.assertEqual(request.call_count, 4)
 
     def test_cap(self):
         """Older comments past the size cap are left out, and the cut is marked."""
