@@ -1,6 +1,7 @@
 """Workflow helpers for the Kodi PR review: last reviewed commit, Kodi 22 files, status, posting."""
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -135,6 +136,7 @@ ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
 CLAIM_LABEL = " (another review bot's claim to check)"
 OWN_LABEL = " (your earlier finding)"
 TEAM_LABEL = " (team)"
+MERGE_EVENTS = 300
 PRIOR_LIMIT = 600
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
@@ -897,7 +899,20 @@ def claim_text(body):
     return re.sub(r"\n{3,}", "\n\n", body).strip()[:CLAIM_LIMIT]
 
 
-def discussion_text(comments):
+def team_logins(comments):
+    """Return the commenters who merged an upstream pull request lately; none if lookup fails."""
+    people = {c["user"]["login"] for c in comments
+              if (c.get("user") or {}).get("type") == "User" and c["user"].get("login")}
+    try:
+        events = itertools.islice(paged(f"/repos/{UPSTREAM}/issues/events"), MERGE_EVENTS)
+        mergers = {(e.get("actor") or {}).get("login") for e in events
+                   if e.get("event") == "merged"}
+    except urllib.error.URLError:
+        return set()
+    return people & mergers
+
+
+def discussion_text(comments, team=None):
     """Format people's comments, comments they replied to and other bots' claims, newest first."""
     by_id = {c["id"]: c for c in comments}
     kept = {c["id"]: c for c in comments
@@ -918,7 +933,7 @@ def discussion_text(comments):
             login, body = login + CLAIM_LABEL, claim_text(body)
         elif login == BOT_LOGIN:
             login += OWN_LABEL
-        elif c.get("author_association") in ("MEMBER", "OWNER"):
+        elif login in (team or ()) or c.get("author_association") in ("MEMBER", "OWNER"):
             login += TEAM_LABEL
         entry = f"{login}, {c['created_at'][:10]}{where}\n{body}\n"
         if size + len(entry) > DISCUSSION_LIMIT:
@@ -938,7 +953,7 @@ def cmd_discussion():
     comments = list(paged(f"/repos/{UPSTREAM}/issues/{number}/comments"))
     comments += paged(f"/repos/{UPSTREAM}/pulls/{number}/comments")
     RUN_DIR.mkdir(exist_ok=True)
-    (RUN_DIR / "discussion.md").write_text(discussion_text(comments))
+    (RUN_DIR / "discussion.md").write_text(discussion_text(comments, team_logins(comments)))
 
 
 def attachable_lines(patch):

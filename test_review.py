@@ -723,11 +723,13 @@ class DiscussionTests(unittest.TestCase):
             self.comment(6, "dev", "User", "2026-01-06T00:00:00Z", "Fixing.", "c.cpp", 5),
             self.comment(7, "lead", "User", "2026-01-07T00:00:00Z", "Make it opt-in.",
                          association="MEMBER"),
+            self.comment(8, "merger", "User", "2026-01-08T00:00:00Z", "Bump the version."),
         ]
         claim, own, team = review.CLAIM_LABEL, review.OWN_LABEL, review.TEAM_LABEL
-        self.assertEqual(review.discussion_text(comments),
+        self.assertEqual(review.discussion_text(comments, {"merger"}),
                          "Newest first. Each entry: login, date, and file:line for a line "
                          "comment.\n\n"
+                         f"merger{team}, 2026-01-08\nBump the version.\n\n"
                          f"lead{team}, 2026-01-07\nMake it opt-in.\n\n"
                          f"dev, 2026-01-06, c.cpp:7, replying to {review.BOT_LOGIN}\nFixing.\n\n"
                          f"{review.BOT_LOGIN}{own}, 2026-01-05, c.cpp:7\n**Minor: Ours**\n\n"
@@ -749,6 +751,33 @@ class DiscussionTests(unittest.TestCase):
                          "Old.\n\n✅ Confirmed as addressed by @dev", "a.cpp")]
         self.assertEqual(review.discussion_text(comments).split("\n\n", 1)[1],
                          f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
+
+    def test_team_by_recent_merges(self):
+        """Commenters who merged within the latest events are team; others and bots are not."""
+        events = ([{"event": "merged", "actor": {"login": "lead"}}]
+                  + [{"event": "labeled", "actor": {"login": "dev"}}] * 99
+                  + [{"event": "merged", "actor": {"login": "merger"}},
+                     {"event": "merged", "actor": {"login": "rabbit"}}]
+                  + [{"event": "closed", "actor": {"login": "dev"}}] * 300
+                  + [{"event": "merged", "actor": {"login": "dev"}}])
+
+        def page(method, path, body=None, raw=False):
+            """Answer each page of the issue events list."""
+            number = int(path.rsplit("page=", 1)[1])
+            return events[(number - 1) * 100:number * 100]
+        comments = [self.comment(i, user, kind, "2026-01-01T00:00:00Z", "x")
+                    for i, (user, kind) in enumerate([("lead", "User"), ("merger", "User"),
+                                                      ("dev", "User"), ("rabbit", "Bot")])]
+        with mock.patch.object(review, "request", side_effect=page) as request:
+            self.assertEqual(review.team_logins(comments), {"lead", "merger"})
+        self.assertEqual(request.call_count, 3)
+
+    def test_team_lookup_failure(self):
+        """A refused events lookup marks nobody."""
+        refused = urllib.error.HTTPError("events", 403, "Forbidden", Message(), None)
+        comments = [self.comment(1, "lead", "User", "2026-01-01T00:00:00Z", "x")]
+        with mock.patch.object(review, "request", side_effect=refused):
+            self.assertEqual(review.team_logins(comments), set())
 
     def test_cap(self):
         """Older comments past the size cap are left out, and the cut is marked."""
