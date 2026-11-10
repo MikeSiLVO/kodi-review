@@ -1,6 +1,7 @@
 """Workflow helpers for the Kodi PR review: last reviewed commit, Kodi 22 files, status, posting."""
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -135,6 +136,7 @@ ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
 CLAIM_LABEL = " (another review bot's claim to check)"
 OWN_LABEL = " (your earlier finding)"
 TEAM_LABEL = " (team)"
+MERGE_EVENTS = 300
 PRIOR_LIMIT = 600
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
@@ -898,18 +900,16 @@ def claim_text(body):
 
 
 def team_logins(comments):
-    """Return the commenters with write access upstream, skipping any whose lookup fails."""
+    """Return the commenters who merged an upstream pull request lately; none if lookup fails."""
     people = {c["user"]["login"] for c in comments
               if (c.get("user") or {}).get("type") == "User" and c["user"].get("login")}
-    team = set()
-    for login in sorted(people):
-        try:
-            access = request("GET", f"/repos/{UPSTREAM}/collaborators/{login}/permission")
-        except urllib.error.URLError:
-            continue
-        if access.get("permission") in CAN_ASK:
-            team.add(login)
-    return team
+    try:
+        events = itertools.islice(paged(f"/repos/{UPSTREAM}/issues/events"), MERGE_EVENTS)
+        mergers = {(e.get("actor") or {}).get("login") for e in events
+                   if e.get("event") == "merged"}
+    except urllib.error.URLError:
+        return set()
+    return people & mergers
 
 
 def discussion_text(comments, team=None):

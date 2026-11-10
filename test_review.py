@@ -752,21 +752,32 @@ class DiscussionTests(unittest.TestCase):
         self.assertEqual(review.discussion_text(comments).split("\n\n", 1)[1],
                          f"rabbit{review.CLAIM_LABEL}, 2026-01-01, a.cpp:7\n**Minor**\n\nClaim.\n")
 
-    def test_team_by_write_access(self):
-        """People with write or admin access are team; read access, refusals and bots are not."""
-        def permission(method, path, body=None, raw=False):
-            """Answer the collaborator permission lookup for each login."""
-            login = path.split("/")[-2]
-            if login == "gone":
-                raise urllib.error.HTTPError(path, 404, "Not Found", Message(), None)
-            return {"permission": {"lead": "admin", "merger": "write"}.get(login, "read")}
+    def test_team_by_recent_merges(self):
+        """Commenters who merged within the latest events are team; others and bots are not."""
+        events = ([{"event": "merged", "actor": {"login": "lead"}}]
+                  + [{"event": "labeled", "actor": {"login": "dev"}}] * 99
+                  + [{"event": "merged", "actor": {"login": "merger"}},
+                     {"event": "merged", "actor": {"login": "rabbit"}}]
+                  + [{"event": "closed", "actor": {"login": "dev"}}] * 300
+                  + [{"event": "merged", "actor": {"login": "dev"}}])
+
+        def page(method, path, body=None, raw=False):
+            """Answer each page of the issue events list."""
+            number = int(path.rsplit("page=", 1)[1])
+            return events[(number - 1) * 100:number * 100]
         comments = [self.comment(i, user, kind, "2026-01-01T00:00:00Z", "x")
                     for i, (user, kind) in enumerate([("lead", "User"), ("merger", "User"),
-                                                      ("dev", "User"), ("gone", "User"),
-                                                      ("rabbit", "Bot"), ("merger", "User")])]
-        with mock.patch.object(review, "request", side_effect=permission) as request:
+                                                      ("dev", "User"), ("rabbit", "Bot")])]
+        with mock.patch.object(review, "request", side_effect=page) as request:
             self.assertEqual(review.team_logins(comments), {"lead", "merger"})
-        self.assertEqual(request.call_count, 4)
+        self.assertEqual(request.call_count, 3)
+
+    def test_team_lookup_failure(self):
+        """A refused events lookup marks nobody."""
+        refused = urllib.error.HTTPError("events", 403, "Forbidden", Message(), None)
+        comments = [self.comment(1, "lead", "User", "2026-01-01T00:00:00Z", "x")]
+        with mock.patch.object(review, "request", side_effect=refused):
+            self.assertEqual(review.team_logins(comments), set())
 
     def test_cap(self):
         """Older comments past the size cap are left out, and the cut is marked."""
