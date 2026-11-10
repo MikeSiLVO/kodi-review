@@ -134,6 +134,7 @@ CLAIM_LIMIT = 1500
 ADDRESSED = re.compile(r"✅ (?:Addressed in commit|Confirmed as addressed)")
 CLAIM_LABEL = " (another review bot's claim to check)"
 OWN_LABEL = " (your earlier finding)"
+TEAM_LABEL = " (team)"
 PRIOR_LIMIT = 600
 REVIEW_ASK = re.compile(r"[\s,:.!]*(?:review\b|$)", re.I)
 FORMAT_ASK = re.compile(r"[\s,:.!]*(?:clang-format|clang|format)[\s,:.!]*$", re.I)
@@ -917,6 +918,8 @@ def discussion_text(comments):
             login, body = login + CLAIM_LABEL, claim_text(body)
         elif login == BOT_LOGIN:
             login += OWN_LABEL
+        elif c.get("author_association") in ("MEMBER", "OWNER"):
+            login += TEAM_LABEL
         entry = f"{login}, {c['created_at'][:10]}{where}\n{body}\n"
         if size + len(entry) > DISCUSSION_LIMIT:
             entries.append("Older comments are cut here.\n")
