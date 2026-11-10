@@ -705,14 +705,14 @@ class UnlinkedTests(unittest.TestCase):
 class DiscussionTests(unittest.TestCase):
     """The upstream conversation written for the reviewer."""
 
-    def comment(self, cid, user, kind, when, body, path=None, reply_to=None):
+    def comment(self, cid, user, kind, when, body, path=None, reply_to=None, association="NONE"):
         """Return a comment shaped like the issue and review comments APIs give it."""
         return {"id": cid, "user": {"login": user, "type": kind}, "created_at": when,
                 "body": body, "path": path, "line": 7 if path else None,
-                "in_reply_to_id": reply_to}
+                "in_reply_to_id": reply_to, "author_association": association}
 
     def test_people_and_bot_claims(self):
-        """People's comments stay, newest first, with replies, claims and own findings marked."""
+        """Comments stay newest first; replies, claims, team comments and own findings marked."""
         comments = [
             self.comment(1, "bot", "Bot", "2026-01-01T00:00:00Z", "Throttle this.", "a.cpp"),
             self.comment(2, "dev", "User", "2026-01-02T00:00:00Z", "Not needed.", "a.cpp", 1),
@@ -721,11 +721,14 @@ class DiscussionTests(unittest.TestCase):
             self.comment(5, review.BOT_LOGIN, "Bot", "2026-01-05T00:00:00Z", "**Minor: Ours**",
                          "c.cpp"),
             self.comment(6, "dev", "User", "2026-01-06T00:00:00Z", "Fixing.", "c.cpp", 5),
+            self.comment(7, "lead", "User", "2026-01-07T00:00:00Z", "Make it opt-in.",
+                         association="MEMBER"),
         ]
-        claim, own = review.CLAIM_LABEL, review.OWN_LABEL
+        claim, own, team = review.CLAIM_LABEL, review.OWN_LABEL, review.TEAM_LABEL
         self.assertEqual(review.discussion_text(comments),
                          "Newest first. Each entry: login, date, and file:line for a line "
                          "comment.\n\n"
+                         f"lead{team}, 2026-01-07\nMake it opt-in.\n\n"
                          f"dev, 2026-01-06, c.cpp:7, replying to {review.BOT_LOGIN}\nFixing.\n\n"
                          f"{review.BOT_LOGIN}{own}, 2026-01-05, c.cpp:7\n**Minor: Ours**\n\n"
                          "author, 2026-01-04\nIntentional.\n\n"
