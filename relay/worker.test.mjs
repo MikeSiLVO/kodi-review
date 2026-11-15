@@ -251,19 +251,34 @@ test("a skin repo pull request gets a skin check when opened, pushed or retarget
   assert.equal(await followUp("pull_request", payload("opened"), repos, none), null);
 });
 
-test("a script repo pull request asks for an add-on check, and takes only addon and help",
+test("a script repo pull request asks for an add-on check, and takes reviews, addon and help",
   async () => {
     const repos = ["xbmc/repo-scripts"];
     const payload = (action) => ({ action, repository: { full_name: "xbmc/repo-scripts" },
       pull_request: { number: 4, state: "open" } });
+    const run = (mode) => ({ pr: "4", repo: "xbmc/repo-scripts", comment: "", mode,
+      source: "push" });
     const retarget = { ...payload("edited"), changes: { base: { ref: { from: "master" } } } };
     for (const event of [...["opened", "reopened", "synchronize"].map(payload), retarget]) {
       assert.deepEqual(await followUp("pull_request", event, repos, lookup({}), [],
-        repos), [{ pr: "4", repo: "xbmc/repo-scripts", comment: "", mode: "addon",
-        source: "push" }], event.action);
+        repos), [run("addon")], event.action);
     }
     assert.equal(await followUp("pull_request", payload("labeled"), repos, lookup({}), [],
       repos), null);
+    const path = "/repos/xbmc/repo-scripts/issues/4/comments?per_page=100&page=1";
+    const open = lookup({ [path]: [summary("Needs more work · 1 problem (Moderate)")] });
+    assert.deepEqual(await followUp("pull_request", payload("synchronize"), repos, open, [],
+      repos), [run("addon"), run("review")]);
+    assert.deepEqual(await followUp("pull_request", payload("opened"), repos, open, [], repos),
+      [run("addon")]);
+    const clean = lookup({ [path]: [summary("Ready to merge")] });
+    assert.deepEqual(await followUp("pull_request", payload("synchronize"), repos, clean, [],
+      repos), [run("addon")]);
+    const reply = threadReply({ repository: { full_name: "xbmc/repo-scripts" } });
+    const finding = lookup({ "/repos/xbmc/repo-scripts/pulls/comments/4":
+      { user: { login: "kodi-review[bot]" }, body: "**Moderate** Leaks." } });
+    assert.equal(await followUp("pull_request_review_comment", reply, repos, finding, [], repos),
+      null);
     const ask = (body, association = "MEMBER", repo = "xbmc/repo-scripts") => trigger(
       "issue_comment", issueComment({ repository: { full_name: repo },
         comment: { id: 5, body, author_association: association, user: { type: "User" } } }),
@@ -273,7 +288,11 @@ test("a script repo pull request asks for an add-on check, and takes only addon 
     assert.equal(ask("@kodi-review addon", "NONE"), "addon");
     assert.equal(ask("@kodi-review addon again", "NONE"), "refuse");
     assert.equal(ask("@kodi-review help", "NONE"), "help");
-    for (const body of ["@kodi-review review", "@kodi-review skin", "what does this do @kodi-review"]) {
+    assert.equal(ask("@kodi-review"), "review");
+    assert.equal(ask("@kodi-review review"), "review");
+    assert.equal(ask("@kodi-review", "NONE"), "refuse");
+    for (const body of ["@kodi-review skin", "@kodi-review format",
+      "what does this do @kodi-review", "@kodi-review what does this do?"]) {
       assert.equal(ask(body), "refuse", body);
     }
     assert.equal(ask("@kodi-review addon", "MEMBER", "xbmc/xbmc"), "refuse");

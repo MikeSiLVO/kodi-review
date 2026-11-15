@@ -1196,17 +1196,20 @@ class TriggerTests(unittest.TestCase):
             for body, mode in (("@kodi-review skin", "skin"), ("@kodi-review help", "help")):
                 self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
 
-    def test_script_repos_take_only_the_addon_check_and_help(self):
-        """On repo-scripts a review, format or skin ask is refused and told why, even a writer's."""
+    def test_script_repos_take_only_reviews_the_addon_check_and_help(self):
+        """On repo-scripts, questions, format, skin and non-writers' review asks are refused."""
         with mock.patch.object(review, "REPO", "xbmc/repo-scripts"):
-            for body, mode in (("@kodi-review", "review"), ("@kodi-review format", "format"),
-                               ("@kodi-review skin", "skin")):
+            for body, mode in (("@kodi-review what does this do?", "answer"),
+                               ("@kodi-review format", "format"), ("@kodi-review skin", "skin")):
                 calls, code = self.run_trigger(self.comment(body=body), mode=mode)
-                self.assertIn("Only `@kodi-review addon`", str(code))
-                self.assertEqual("AI reviews coming soon!" in str(code), mode == "review", body)
+                self.assertIn("Only `@kodi-review`, `@kodi-review addon`", str(code))
                 self.assertEqual(calls[-1], ("POST", "/repos/xbmc/repo-scripts/issues/7/comments"))
-            for body, mode in (("@kodi-review addon", "addon"), ("@kodi-review help", "help")):
+            for body, mode in (("@kodi-review", "review"), ("@kodi-review addon", "addon"),
+                               ("@kodi-review help", "help")):
                 self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
+            code = self.run_trigger(self.comment(body="@kodi-review"), access="read",
+                                    mode="review")[1]
+            self.assertIn("Reviews need write access", str(code))
 
     def test_anyone_may_ask_for_the_addon_check_once_per_head(self):
         """Addon ask needs no write access, stops at a checked head and base; again needs write."""

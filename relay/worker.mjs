@@ -14,7 +14,7 @@ export function spoken(body) {
 const STRANGERS = new Set(["NONE", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN"]);
 const OPEN_MODES = new Set(["format", "skin", "addon", "help"]);
 const SKIN_REPO_MODES = new Set(["skin", "help"]);
-const SCRIPT_REPO_MODES = new Set(["addon", "help"]);
+const SCRIPT_REPO_MODES = new Set(["review", "addon", "help"]);
 const CHECK_ACTIONS = new Set(["opened", "reopened", "synchronize"]);
 const BOT = "kodi-review[bot]";
 const FINDING = /^\*\*(Serious|Moderate|Minor)\b/;
@@ -81,20 +81,22 @@ export async function followUp(event, payload, allowed, get, skinRepos = [], scr
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
   if (!allowed.includes(repo) || !pr || pr.state !== "open") return null;
+  const scriptRepo = scriptRepos.includes(repo);
   if (event === "pull_request") {
     const run = (mode) => ({ pr: String(pr.number), repo, comment: "", mode, source: "push" });
-    const check = skinRepos.includes(repo) ? "skin" : scriptRepos.includes(repo) ? "addon" : "";
     const retargeted = payload.action === "edited" && Boolean(payload.changes?.base);
-    if (check) return CHECK_ACTIONS.has(payload.action) || retargeted ? [run(check)] : null;
-    if (payload.action !== "synchronize") return null;
-    const { summary, skin } = await latestChecks(repo, pr.number, get);
-    const runs = [];
-    if (summary && OPEN_PROBLEMS.test(summary.body)) runs.push("review");
-    if (skin) runs.push("skin");
+    const checked = CHECK_ACTIONS.has(payload.action) || retargeted;
+    if (skinRepos.includes(repo)) return checked ? [run("skin")] : null;
+    const runs = scriptRepo && checked ? ["addon"] : [];
+    if (payload.action === "synchronize") {
+      const { summary, skin } = await latestChecks(repo, pr.number, get);
+      if (summary && OPEN_PROBLEMS.test(summary.body)) runs.push("review");
+      if (skin) runs.push("skin");
+    }
     return runs.length ? runs.map(run) : null;
   }
   const comment = payload.comment;
-  if (event !== "pull_request_review_comment" || payload.action !== "created"
+  if (scriptRepo || event !== "pull_request_review_comment" || payload.action !== "created"
       || !comment?.in_reply_to_id || comment.user?.type === "Bot"
       || STRANGERS.has(comment.author_association)) return null;
   const parent = await get(`/repos/${repo}/pulls/comments/${comment.in_reply_to_id}`);

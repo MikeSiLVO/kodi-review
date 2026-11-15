@@ -1626,11 +1626,9 @@ def cmd_trigger():
             refuse("closed", "This is closed, so I won't run anything here.")
         if "pull_request" not in thread and REPO not in SKIN_REPOS:
             refuse("issue", "I only run on pull requests here.")
-    if REPO in SCRIPT_REPOS and asked not in ("addon", "help"):
-        ai = asked in ("review", "answer")
-        refuse("script-repo ai" if ai else "script-repo",
-               "Only `@kodi-review addon` and `@kodi-review help` run on this repository."
-               + (" AI reviews coming soon!" if ai else ""))
+    if REPO in SCRIPT_REPOS and asked not in ("review", "addon", "help"):
+        refuse("script-repo", "Only `@kodi-review`, `@kodi-review addon` and `@kodi-review help` "
+               "run on this repository.")
     if asked == "addon" and REPO not in SCRIPT_REPOS:
         refuse("addon-repo", "The add-on check runs on repo-scripts pull requests.")
     if REPO in SKIN_REPOS and asked not in ("skin", "help"):

@@ -4,10 +4,7 @@ A pull request reviewer for Kodi ([xbmc/xbmc](https://github.com/xbmc/xbmc)), ru
 Code on GitHub Actions. It reports only problems that should block a merge, proves each one from
 the code, and adds a status block.
 
-Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) GitHub App. To use it
-on a repo, install the App there with its two permissions: Pull requests (read and write) and
-Issues (read and write, for skin checks and help on issues). Mentions only work in xbmc/xbmc,
-xbmc/repo-skins and my test forks of both; repo-skins takes only the skin check and help.
+Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) GitHub App. To use it on a repo, install the App there with its two permissions: Pull requests (read and write) and Issues (read and write, for skin checks and help on issues). Mentions only work in xbmc/xbmc, xbmc/repo-skins, xbmc/repo-scripts and my test forks of them; repo-skins takes only the skin check and help, and repo-scripts takes the add-on review, the add-on check and help.
 
 ## How a review runs
 
@@ -71,6 +68,10 @@ model runs. A head that already has its check is not checked again. Dispatched b
 On xbmc/repo-scripts every pull request gets an add-on check when it opens and after each push or target branch change, and `@kodi-review addon` alone asks for one. It runs the add-on checker in [kdk](https://github.com/MikeSiLVO/kdk) on the add-on folder for the target branch, Matrix to Piers, and compares it with the copy already on that branch. It covers what the Kodi repo's addon-checker reports and what reviewers there usually ask for: addon.xml, dependencies, files, languages and translations, string ids, license, artwork and the Python code's use of the Kodi API. The bot adds the pull request's own rules: one add-on folder in one commit, a commit subject and title reading `[<id>] <version>`, addon.xml links that don't open, and a changed provider or submitter.
 
 The comment has the skin check's layout: a line of counts, then the new errors, warnings and hints, then what was fixed, then the findings already there before, in the same sections with their places and errors open. Anyone can ask, since no model runs. A commit already checked is checked again only after the bot's checks are updated or the target branch changes; `again` on the asking line checks it anyway and needs write access. Each new check hides the last one. A pull request to Leia or older is not checked.
+
+## Add-on review
+
+On xbmc/repo-scripts, `@kodi-review` alone from someone with write access reviews the add-on's code as a review runs on xbmc/xbmc: findings as line comments, a summary at the end, and a re-review on each push while findings are open. It reads the pull request's changes to the add-on folder, without translations, binaries and bundled third-party code. It doesn't repeat what the add-on check reports, but the check's errors count in its verdict. Questions and replies under findings get no answer there, and there is no formatting check.
 
 ## Files
 
