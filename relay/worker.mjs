@@ -76,7 +76,7 @@ async function latestChecks(repo, number, get) {
   return found;
 }
 
-/** Return the runs for a pull request opening or push, or a finding's reply. */
+/** Return the runs for a pull request opening, push or base change, or a finding's reply. */
 export async function followUp(event, payload, allowed, get, skinRepos = [], scriptRepos = []) {
   const repo = payload.repository?.full_name;
   const pr = payload.pull_request;
@@ -84,7 +84,8 @@ export async function followUp(event, payload, allowed, get, skinRepos = [], scr
   if (event === "pull_request") {
     const run = (mode) => ({ pr: String(pr.number), repo, comment: "", mode, source: "push" });
     const check = skinRepos.includes(repo) ? "skin" : scriptRepos.includes(repo) ? "addon" : "";
-    if (check) return CHECK_ACTIONS.has(payload.action) ? [run(check)] : null;
+    const retargeted = payload.action === "edited" && Boolean(payload.changes?.base);
+    if (check) return CHECK_ACTIONS.has(payload.action) || retargeted ? [run(check)] : null;
     if (payload.action !== "synchronize") return null;
     const { summary, skin } = await latestChecks(repo, pr.number, get);
     const runs = [];
@@ -115,7 +116,7 @@ async function readGitHub(path, token) {
 }
 
 export default {
-  /** Handle a fetch: dispatch runs for a signed mention, reply, opening or push, or decline. */
+  /** Handle a fetch: dispatch runs for a signed mention, reply, opening, push or base change. */
   async fetch(request, env) {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/github") {
       return new Response("Not found", { status: 404 });

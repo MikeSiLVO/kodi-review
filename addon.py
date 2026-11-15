@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from review import (CREDENTIAL, REPO, RUN_DIR, WITHHELD, addon_build, addon_comments,
-                    hide_summaries, paged, request, unlinked)
+                    hide_summaries, paged, pull_mark, request, unlinked)
 from skin import (ADDON_XML_LIMIT, COMMENT_LIMIT, REPORT_LIMIT, SEVERITY_WORDS, USER_AGENT,
                   OutOfScope, SkinError, check_public, check_sandbox, code, commits_checked,
                   compared, download, existing, findings, git_tree, kdk_link, plain, plural,
@@ -338,8 +338,9 @@ def check_scripts_pr(scratch):
         raise OutOfScope(f"the pull request targets {branch}; the add-on check covers "
                          + ", ".join(RELEASES))
     folders, loose = changed_places(files)
-    facts: dict[str, Any] = {"key": f"sha={head}", "head": head, "base": base, "branch": branch,
-                             "pull": commit_rows(commits, folders, loose), "addons": []}
+    facts: dict[str, Any] = {"key": f"sha={pull_mark(head, branch)}", "head": head, "base": base,
+                             "branch": branch, "pull": commit_rows(commits, folders, loose),
+                             "addons": []}
     if branch not in RELEASES:
         facts["pull"].insert(0, bot_row(PULL_CHECK, "pr.base-branch", "error",
                                         f"The pull request targets {branch}, not a Kodi release "

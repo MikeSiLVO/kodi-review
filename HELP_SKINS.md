@@ -6,5 +6,4 @@ Start a comment with one of these:
   a commit, branch or tag, or a zip. [More](https://github.com/MikeSiLVO/kodi-review#skin-check)
 - `@kodi-review help`: this list.
 
-Anyone can ask. A skin already checked at the same commit is checked again only after my checks
-are updated. Each pull request gets my check when it opens and after each push.
+Anyone can ask. A skin already checked at the same commit is checked again only after my checks are updated or the target branch changes. Each pull request gets my check when it opens and after each push or target branch change.

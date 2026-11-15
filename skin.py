@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from review import (AGAIN, CREDENTIAL, REPO, RUN_DIR, SKIN_ASK, WITHHELD, asks_again,
-                    hide_summaries, paged, request, skin_build, skin_comments, tell, unlinked)
+                    hide_summaries, paged, pull_mark, request, skin_build, skin_comments, tell,
+                    unlinked)
 
 KODI_REPOS = ("xbmc/xbmc", "MikeSiLVO/xbmc")
 GUI_RELEASES = {"5.17": "omega", "5.18": "piers"}
@@ -432,7 +433,8 @@ def check_kodi_pr(scratch):
             results.append(skin_result(trees["head"], trees.get("base"), release, True, branch))
             folders.append(skin)
     based = any(not r["new"] for r in results)
-    return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
+    return {"key": f"sha={pull_mark(head, branch)}",
+            "checked": commits_checked(head, base, folders, based),
             "skins": results}
 
 
@@ -456,7 +458,8 @@ def check_skins_pr(scratch):
         results.append(skin_result((head_tree, skin), base_side, branch, False, branch))
         folders.append(skin)
     based = any(not r["new"] for r in results)
-    return {"key": f"sha={head}", "checked": commits_checked(head, base, folders, based),
+    return {"key": f"sha={pull_mark(head, branch)}",
+            "checked": commits_checked(head, base, folders, based),
             "skins": results}
 
 

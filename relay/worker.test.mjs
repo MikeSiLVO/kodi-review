@@ -202,6 +202,8 @@ test("a push after a summary with open problems asks for a recheck", async () =>
   assert.equal(await followUp("pull_request", push, REPOS, clean), null);
   assert.equal(await followUp("pull_request", push, REPOS, lookup({ [path]: [] })), null);
   assert.equal(await followUp("pull_request", { ...push, action: "opened" }, REPOS, open), null);
+  const retarget = { ...push, action: "edited", changes: { base: { ref: { from: "master" } } } };
+  assert.equal(await followUp("pull_request", retarget, REPOS, open), null);
 });
 
 /** Return a skin check comment by the bot with the given verdict line. */
@@ -228,15 +230,19 @@ test("a push to a pull request with a skin check asks for a skin recheck", async
     [run("review"), run("skin")]);
 });
 
-test("a skin repo pull request asks for a skin check when opened, reopened or pushed", async () => {
+test("a skin repo pull request gets a skin check when opened, pushed or retargeted", async () => {
   const repos = ["xbmc/repo-skins"];
   const payload = (action, state = "open") => ({ action,
     repository: { full_name: "xbmc/repo-skins" }, pull_request: { number: 9, state } });
   const none = lookup({});
-  for (const action of ["opened", "reopened", "synchronize"]) {
-    assert.deepEqual(await followUp("pull_request", payload(action), repos, none, repos),
-      [{ pr: "9", repo: "xbmc/repo-skins", comment: "", mode: "skin", source: "push" }], action);
+  const retarget = { ...payload("edited"), changes: { base: { ref: { from: "master" } } } };
+  for (const event of [...["opened", "reopened", "synchronize"].map((a) => payload(a)), retarget]) {
+    assert.deepEqual(await followUp("pull_request", event, repos, none, repos),
+      [{ pr: "9", repo: "xbmc/repo-skins", comment: "", mode: "skin", source: "push" }],
+      event.action);
   }
+  const retitled = { ...payload("edited"), changes: { title: { from: "x" } } };
+  assert.equal(await followUp("pull_request", retitled, repos, none, repos), null);
   for (const action of ["edited", "labeled", "closed"]) {
     assert.equal(await followUp("pull_request", payload(action), repos, none, repos), null, action);
   }
@@ -250,10 +256,11 @@ test("a script repo pull request asks for an add-on check, and takes only addon 
     const repos = ["xbmc/repo-scripts"];
     const payload = (action) => ({ action, repository: { full_name: "xbmc/repo-scripts" },
       pull_request: { number: 4, state: "open" } });
-    for (const action of ["opened", "reopened", "synchronize"]) {
-      assert.deepEqual(await followUp("pull_request", payload(action), repos, lookup({}), [],
+    const retarget = { ...payload("edited"), changes: { base: { ref: { from: "master" } } } };
+    for (const event of [...["opened", "reopened", "synchronize"].map(payload), retarget]) {
+      assert.deepEqual(await followUp("pull_request", event, repos, lookup({}), [],
         repos), [{ pr: "4", repo: "xbmc/repo-scripts", comment: "", mode: "addon",
-        source: "push" }], action);
+        source: "push" }], event.action);
     }
     assert.equal(await followUp("pull_request", payload("labeled"), repos, lookup({}), [],
       repos), null);

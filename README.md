@@ -64,29 +64,13 @@ model runs. A head that already has its check is not checked again. Dispatched b
 
 ## Skin check
 
-`@kodi-review skin` alone on a pull request checks the skins it changes with
-[kdk](https://github.com/MikeSiLVO/kdk), or Estuary when it changes none, against the Kodi
-release of its base branch. On a repo-skins submission issue, `@kodi-review skin <link>` checks
-the skin at the link: a GitHub repo at a commit, branch or tag, or a zip. A revision may follow a
-bare repo link. The comment opens with a line of counts, then the new errors in an open fold
-and the new warnings in a closed one. Each holds a fold per kind of problem with an example and
-a table naming every finding with its count and up to 10 of its places. The findings the skin
-muted get a closed fold laid out the same way, each kind with the skin's reasons. Fixed findings
-and those already there before get closed folds of their own; a new skin counts everything as
-new. Past GitHub's comment size, each table keeps its 25 largest findings, then tables go, muted
-ones first, then warnings, smallest first, and the run's summary page lists every finding.
-Anyone can ask, since no model runs. A commit or link already checked is checked again only after
-the bot's checks are updated; `again` on the asking line, before or after the link, checks it
-anyway and needs write access. A repo-skins pull request is checked when it opens and after each
-push without anyone asking, and gets no comment when the check doesn't cover it. Elsewhere, once a
-pull request has a skin check, each push gets a new one. Each new check hides the last one.
-Omega and Piers skins are checked; master counts as Piers while their xbmc.gui versions match.
+`@kodi-review skin` alone on a pull request checks the skins it changes with [kdk](https://github.com/MikeSiLVO/kdk), or Estuary when it changes none, against the Kodi release of its base branch. On a repo-skins submission issue, `@kodi-review skin <link>` checks the skin at the link: a GitHub repo at a commit, branch or tag, or a zip. A revision may follow a bare repo link. The comment opens with a line of counts, then the new errors in an open fold and the new warnings in a closed one. Each holds a fold per kind of problem with an example and a table naming every finding with its count and up to 10 of its places. The findings the skin muted get a closed fold laid out the same way, each kind with the skin's reasons. Fixed findings and those already there before get closed folds of their own; a new skin counts everything as new. Past GitHub's comment size, each table keeps its 25 largest findings, then tables go, muted ones first, then warnings, smallest first, and the run's summary page lists every finding. Anyone can ask, since no model runs. A commit or link already checked is checked again only after the bot's checks are updated or the pull request's target branch changes; `again` on the asking line, before or after the link, checks it anyway and needs write access. A repo-skins pull request is checked when it opens and after each push or target branch change, without anyone asking, and gets no comment when the check doesn't cover it. Elsewhere, once a pull request has a skin check, each push gets a new one. Each new check hides the last one. Omega and Piers skins are checked; master counts as Piers while their xbmc.gui versions match.
 
 ## Add-on check
 
-On xbmc/repo-scripts every pull request gets an add-on check when it opens and after each push, and `@kodi-review addon` alone asks for one. It runs the add-on checker in [kdk](https://github.com/MikeSiLVO/kdk) on the add-on folder for the target branch, Matrix to Piers, and compares it with the copy already on that branch. It covers what the Kodi repo's addon-checker reports and what reviewers there usually ask for: addon.xml, dependencies, files, languages and translations, string ids, license, artwork and the Python code's use of the Kodi API. The bot adds the pull request's own rules: one add-on folder in one commit, a commit subject and title reading `[<id>] <version>`, addon.xml links that don't open, and a changed provider or submitter.
+On xbmc/repo-scripts every pull request gets an add-on check when it opens and after each push or target branch change, and `@kodi-review addon` alone asks for one. It runs the add-on checker in [kdk](https://github.com/MikeSiLVO/kdk) on the add-on folder for the target branch, Matrix to Piers, and compares it with the copy already on that branch. It covers what the Kodi repo's addon-checker reports and what reviewers there usually ask for: addon.xml, dependencies, files, languages and translations, string ids, license, artwork and the Python code's use of the Kodi API. The bot adds the pull request's own rules: one add-on folder in one commit, a commit subject and title reading `[<id>] <version>`, addon.xml links that don't open, and a changed provider or submitter.
 
-The comment has the skin check's layout: a line of counts, then the new errors, warnings and hints, then what was fixed, then the findings already there before, in the same sections with their places and errors open. Anyone can ask, since no model runs. A commit already checked is checked again only after the bot's checks are updated; `again` on the asking line checks it anyway and needs write access. Each new check hides the last one. A pull request to Leia or older is not checked.
+The comment has the skin check's layout: a line of counts, then the new errors, warnings and hints, then what was fixed, then the findings already there before, in the same sections with their places and errors open. Anyone can ask, since no model runs. A commit already checked is checked again only after the bot's checks are updated or the target branch changes; `again` on the asking line checks it anyway and needs write access. Each new check hides the last one. A pull request to Leia or older is not checked.
 
 ## Files
 

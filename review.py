@@ -1449,23 +1449,34 @@ def check_recheck():
         sys.exit(f"{len(recent)} reviews in the last day; push rechecks wait for a mention.")
 
 
+def pull_mark(head, branch):
+    """Name a pull request check by its head commit and the base branch it ran against."""
+    return f"{head}@{branch}"
+
+
+def current_pull():
+    """Return the pull request's head commit and the mark a current check of it carries."""
+    meta = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")
+    return meta["head"]["sha"], pull_mark(meta["head"]["sha"], meta["base"]["ref"])
+
+
 def check_skin_recheck():
     """Check a push may recheck skins: exit 1 on a current check, or on none outside skin repos."""
     checks = skin_comments()
     if not checks and REPO not in SKIN_REPOS:
         sys.exit("No skin check here, so a push needs no recheck.")
-    head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+    head, mark = current_pull()
     marker = SKIN_MARKER.match(checks[-1]["body"]) if checks else None
-    if marker and marker[2] == head and marker[3].strip() == skin_build():
+    if marker and marker[2] == mark and marker[3].strip() == skin_build():
         sys.exit(f"The skin check of {head[:12]} is already posted.")
 
 
 def check_addon_recheck():
-    """Check a push may recheck the add-on: exit 1 on a current check of this head."""
+    """Check a push may recheck the add-on: exit 1 on a current check."""
     checks = addon_comments()
-    head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+    head, mark = current_pull()
     marker = ADDON_MARKER.match(checks[-1]["body"]) if checks else None
-    if marker and marker[2] == head and marker[3].strip() == addon_build():
+    if marker and marker[2] == mark and marker[3].strip() == addon_build():
         sys.exit(f"The add-on check of {head[:12]} is already posted.")
 
 
@@ -1604,12 +1615,12 @@ def cmd_trigger():
     again = asked in ("skin", "addon") and asks_again(comment.get("body") or "")
     if asked in ("skin", "addon") and not again:
         if os.environ.get("SOURCE") != "issue":
-            head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]
+            head, mark = current_pull()
             build, posted, marker = ((skin_build(), skin_comments(), SKIN_MARKER) if asked == "skin"
                                      else (addon_build(), addon_comments(), ADDON_MARKER))
-            if any(m[2] == head and m[3].strip() == build
+            if any(m[2] == mark and m[3].strip() == build
                    for c in posted if (m := marker.match(c["body"]))):
-                refuse(f"{asked} sha={head} {build}",
+                refuse(f"{asked} sha={mark} {build}",
                        f"Already checked at `{head[:12]}`, and my checks haven't changed since.")
     elif asked == "format":
         head = request("GET", f"/repos/{REPO}/pulls/{os.environ['FORK_PR']}")["head"]["sha"]

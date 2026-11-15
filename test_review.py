@@ -972,7 +972,7 @@ class TriggerTests(unittest.TestCase):
 
     def run_trigger(self, comment, access: str | None = "write", asker="issue/5", mode="review",
                     posted=(), skins=(), source="mention", build="kdk=1 style=a", thread=None,
-                    told=(), addons=()):
+                    told=(), addons=(), base="omega"):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
@@ -983,7 +983,7 @@ class TriggerTests(unittest.TestCase):
                 refusals.append(urllib.error.HTTPError(path, 404, "Not Found", Message(), None))
                 raise refusals[-1]
             if path.endswith("/pulls/7"):
-                return {"head": {"sha": "a" * 40}}
+                return {"head": {"sha": "a" * 40}, "base": {"ref": base}}
             if path.endswith("/issues/7"):
                 return thread or {"state": "open", "pull_request": {}}
             if "/pulls/7/comments" in path:
@@ -995,10 +995,10 @@ class TriggerTests(unittest.TestCase):
                 return ([{"user": {"type": "Bot"}, "body": f"<!-- kodi-review format sha={sha} -->"}
                          for sha in posted]
                         + [{"user": {"type": "Bot"},
-                            "body": f"<!-- kodi-review skin sha={sha} kdk=1 style=a -->"}
+                            "body": f"<!-- kodi-review skin sha={sha}@omega kdk=1 style=a -->"}
                            for sha in skins]
                         + [{"user": {"type": "Bot"},
-                            "body": f"<!-- kodi-review addon sha={sha} kdk=1 style=a -->"}
+                            "body": f"<!-- kodi-review addon sha={sha}@omega kdk=1 style=a -->"}
                            for sha in addons])
             if path.endswith("/permission"):
                 if access is None:
@@ -1177,7 +1177,7 @@ class TriggerTests(unittest.TestCase):
                 self.assertIsNone(self.run_trigger(self.comment(body=body), mode=mode)[1], body)
 
     def test_anyone_may_ask_for_the_addon_check_once_per_head(self):
-        """An addon ask needs no write access and stops at a checked head; again needs write."""
+        """Addon ask needs no write access, stops at a checked head and base; again needs write."""
         ask = self.comment(body="@kodi-review addon")
         with mock.patch.object(review, "REPO", "xbmc/repo-scripts"):
             calls, code = self.run_trigger(ask, access="none", mode="addon", addons=["b" * 40])
@@ -1185,6 +1185,8 @@ class TriggerTests(unittest.TestCase):
             self.assertFalse(any(path.endswith("/permission") for _, path in calls))
             code = self.run_trigger(ask, access="none", mode="addon", addons=["a" * 40])[1]
             self.assertIn("Already checked at `aaaaaaaaaaaa`", str(code))
+            self.assertIsNone(self.run_trigger(ask, access="none", mode="addon", addons=["a" * 40],
+                                               base="piers")[1])
             again = self.comment(body="@kodi-review addon again")
             self.assertIsNone(self.run_trigger(again, mode="addon", addons=["a" * 40])[1])
             code = self.run_trigger(again, access="none", mode="addon", addons=["a" * 40])[1]
@@ -1732,18 +1734,19 @@ class FollowUpTests(unittest.TestCase):
 
     def test_push_rechecks_skins_once_checked(self):
         """A push rechecks the skins when there is a skin check and the newest is not current."""
-        def check(verdict, sha="b" * 40, build="kdk=1 style=a"):
+        def check(verdict, sha="b" * 40, build="kdk=1 style=a", branch="omega"):
             """Return a skin check comment with the given verdict line."""
-            return {"body": f"<!-- kodi-review skin sha={sha} {build} -->\n**Skin check** · x\n\n"
-                            f"{verdict}\n"}
+            return {"body": f"<!-- kodi-review skin sha={sha}@{branch} {build} -->\n"
+                            f"**Skin check** · x\n\n{verdict}\n"}
         cases = [([], True),
                  ([check("2 new errors and 3 new warnings.")], False),
                  ([check("No new problems. 3 already there before 1.0.")], False),
                  ([check("5 new warnings.")], False),
                  ([check("2 new errors.", sha="a" * 40)], True),
                  ([check("2 new errors.", sha="a" * 40, build="kdk=0 style=a")], False),
+                 ([check("2 new errors.", sha="a" * 40, branch="master")], False),
                  ([check("2 new errors."), check("No new problems.", sha="a" * 40)], True)]
-        head = {"head": {"sha": "a" * 40}}
+        head = {"head": {"sha": "a" * 40}, "base": {"ref": "omega"}}
         for checks, stops in cases:
             with mock.patch.object(review, "skin_comments", return_value=checks), \
                     mock.patch.object(review, "skin_build", return_value="kdk=1 style=a"), \
@@ -1757,14 +1760,33 @@ class FollowUpTests(unittest.TestCase):
 
     def test_skin_repo_push_checks_without_an_earlier_check(self):
         """A skin repo push or opening checks with no skin check yet and stops on a current one."""
-        current = {"body": f"<!-- kodi-review skin sha={'a' * 40} kdk=1 style=a -->\nx"}
-        head = {"head": {"sha": "a" * 40}}
+        current = {"body": f"<!-- kodi-review skin sha={'a' * 40}@omega kdk=1 style=a -->\nx"}
+        head = {"head": {"sha": "a" * 40}, "base": {"ref": "omega"}}
         for checks, stops in [([], False), ([current], True)]:
             with mock.patch.object(review, "REPO", "xbmc/repo-skins"), \
                     mock.patch.object(review, "skin_comments", return_value=checks), \
                     mock.patch.object(review, "skin_build", return_value="kdk=1 style=a"), \
                     mock.patch.object(review, "request", return_value=head), \
                     mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "skin",
+                                                 "FORK_PR": "7"}):
+                if stops:
+                    self.assertRaises(SystemExit, review.cmd_trigger)
+                else:
+                    review.cmd_trigger()
+
+    def test_push_or_retarget_rechecks_the_addon_unless_current(self):
+        """A push or base change rechecks the add-on unless its check names this head and base."""
+        def check(mark):
+            """Return an add-on check comment marked with the given head and base."""
+            return {"body": f"<!-- kodi-review addon sha={mark} kdk=1 style=a -->\nx"}
+        head = {"head": {"sha": "a" * 40}, "base": {"ref": "omega"}}
+        for checks, stops in [([], False), ([check("a" * 40 + "@omega")], True),
+                              ([check("a" * 40 + "@master")], False),
+                              ([check("b" * 40 + "@omega")], False)]:
+            with mock.patch.object(review, "addon_comments", return_value=checks), \
+                    mock.patch.object(review, "addon_build", return_value="kdk=1 style=a"), \
+                    mock.patch.object(review, "request", return_value=head), \
+                    mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "addon",
                                                  "FORK_PR": "7"}):
                 if stops:
                     self.assertRaises(SystemExit, review.cmd_trigger)
