@@ -52,6 +52,8 @@ access, or that commit is already checked.
 Each reason is given once per thread; asking again gets a 😕 reaction instead. A reply under a
 finding from someone without write access gets no answer.
 
+A comment, opening or push that GitHub fails to deliver to the bot is sent again within about 10 minutes, up to three tries in all, while it is under two hours old.
+
 ## Formatting only
 
 `@kodi-review format`, `clang` or `clang-format`, alone after the mention, runs only the
@@ -88,6 +90,8 @@ On xbmc/repo-scripts, `@kodi-review` alone from someone with write access review
 | `test_skin.py` | Offline tests: `python3 -m unittest test_skin` |
 | `addon.py` | Fetches the add-on and its copy on the branch, runs kdk's add-on check in its sandbox, adds the pull request's own rules, posts the add-on check |
 | `test_addon.py` | Offline tests: `python3 -m unittest test_addon` |
+| `redeliver.py` | Replays the App's webhook deliveries from the last two hours that never got through, every 10 minutes from `redeliver.yml` |
+| `test_redeliver.py` | Offline tests: `python3 -m unittest test_redeliver` |
 | `kdkcheck.py` | Tries a kdk build on pinned real skins through the skin check and diffs it with the last run: `python3 kdkcheck.py` |
 | `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
 | `relay/wrangler.toml` | The Worker's address and settings |
@@ -116,3 +120,4 @@ The reviewer reads code and text written by strangers, so it gets as little as p
 - kdk runs in bubblewrap with no network, no environment, a read-only skin and one writable
   folder for its report, and ignores config files in the skin. If the sandbox cannot start,
   nothing is checked. Text from the skin is posted inside code spans.
+- The redelivery job holds the App's key, runs only this repo's own code on a schedule, and reads nothing but the App's list of deliveries: ids, events and status codes, no pull request content.
