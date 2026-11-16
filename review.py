@@ -8,6 +8,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -152,10 +153,11 @@ BOT_MENTION = re.compile(r"(?<![\w-])@kodi-review(?![\w-])", re.I)
 QUOTED = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`|<!--.*?-->|^[ \t]*>[^\n]*", re.S | re.M)
 ASKER = re.compile(r"(issue|review)/(\d+)")
 CAN_ASK = ("admin", "write")
+READ_RETRY_PAUSES = (2, 5)
 
 
 def request(method, path, body=None, raw=False) -> Any:
-    """Request a GitHub API endpoint and return the decoded JSON, or a file's bytes."""
+    """Request an API endpoint, retrying GET on 5xx or network error; return JSON or file bytes."""
     accept = "application/vnd.github.raw+json" if raw else "application/vnd.github+json"
     req = urllib.request.Request(
         path if path.startswith("http") else API + path,
@@ -163,8 +165,19 @@ def request(method, path, body=None, raw=False) -> Any:
         method=method,
         headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": accept,
                  "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "kodi-review"})
-    with urllib.request.urlopen(req) as resp:
-        data = resp.read()
+    # a write that errored may still have landed, and a 4xx answer won't change
+    pauses = list(READ_RETRY_PAUSES) if method == "GET" else []
+    while True:
+        try:
+            with urllib.request.urlopen(req) as resp:
+                data = resp.read()
+            break
+        except OSError as err:
+            if not pauses or (isinstance(err, urllib.error.HTTPError) and err.code < 500):
+                raise
+            pause = pauses.pop(0)
+            print(f"GET {path} failed ({err}), retrying in {pause} s", file=sys.stderr)
+            time.sleep(pause)
     if raw:
         return data
     return json.loads(data) if data else None

@@ -1886,3 +1886,50 @@ class FollowUpTests(unittest.TestCase):
         with mock.patch.object(review, "summary_comment", return_value=None):
             self.assertIsNone(review.earlier_kodi22())
 
+
+class RequestRetryTests(unittest.TestCase):
+    """Retrying GitHub API reads that fail on GitHub's side or the network."""
+
+    def call(self, method, *outcomes):
+        """Call request on faked errors or bodies in turn; return result, tries and pauses."""
+        tries = []
+
+        def opened(req):
+            tries.append(req.get_method())
+            outcome = outcomes[len(tries) - 1]
+            if isinstance(outcome, Exception):
+                raise outcome
+            reply = mock.MagicMock()
+            reply.__enter__.return_value.read.return_value = outcome
+            return reply
+
+        with mock.patch.object(review.urllib.request, "urlopen", side_effect=opened), \
+                mock.patch.object(review.time, "sleep") as slept, \
+                mock.patch.dict(os.environ, {"GH_TOKEN": "t"}), \
+                mock.patch("sys.stderr", new_callable=io.StringIO):
+            try:
+                result = review.request(method, "/repos/x/y")
+            except OSError as err:
+                result = err
+        return result, len(tries), [c.args[0] for c in slept.call_args_list]
+
+    def error(self, code):
+        """Return an HTTP error GitHub could answer with."""
+        return urllib.error.HTTPError("u", code, "x", Message(), io.BytesIO())
+
+    def test_a_read_retries_server_and_network_errors(self):
+        """A GET retries a 5xx or a dropped connection, pausing 2 s then 5 s."""
+        reset = urllib.error.URLError(ConnectionResetError("EOF"))
+        self.assertEqual(self.call("GET", self.error(502), reset, b'{"ok": 1}'),
+                         ({"ok": 1}, 3, [2, 5]))
+
+    def test_a_read_gives_up_after_two_retries(self):
+        """A third failure is raised."""
+        result, tries, _ = self.call("GET", *[self.error(503)] * 3)
+        self.assertEqual((getattr(result, "code", None), tries), (503, 3))
+
+    def test_client_errors_and_writes_are_not_retried(self):
+        """A 4xx answer, or any failed write, is raised at once."""
+        self.assertEqual(self.call("GET", self.error(404))[1:], (1, []))
+        self.assertEqual(self.call("POST", self.error(502))[1:], (1, []))
+
