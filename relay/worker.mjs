@@ -117,7 +117,26 @@ async function readGitHub(path, token) {
   return reply.ok ? reply.json() : null;
 }
 
+/** Dispatch a bot repo workflow on main; return GitHub's reply. */
+function dispatch(env, workflow, inputs) {
+  const url = `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/${workflow}`;
+  return fetch(`${url}/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.DISPATCH_TOKEN}`,
+      Accept: "application/vnd.github+json", "User-Agent": "kodi-review-relay",
+      "X-GitHub-Api-Version": "2022-11-28" },
+    body: JSON.stringify(inputs ? { ref: "main", inputs } : { ref: "main" }),
+  });
+}
+
 export default {
+  /** Start the redelivery job on the relay's cron, every ten minutes. */
+  async scheduled(controller, env) {
+    const reply = await dispatch(env, "redeliver.yml");
+    console.log(reply.ok ? "redelivery job started"
+      : `redelivery job not started: ${reply.status} ${(await reply.text()).slice(0, 300)}`);
+  },
+
   /** Handle a fetch: dispatch runs for a signed mention, reply, opening, push or base change. */
   async fetch(request, env) {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/github") {
@@ -132,7 +151,8 @@ export default {
     const event = request.headers.get("x-github-event");
     const payload = JSON.parse(body);
     const number = payload.pull_request?.number ?? payload.issue?.number ?? "-";
-    const label = `${delivery} ${event}.${payload.action} ${payload.repository?.full_name}#${number}`;
+    const repo = payload.repository?.full_name;
+    const label = `${delivery} ${event}.${payload.action} ${repo}#${number}`;
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
     const skinRepos = (env.SKIN_REPOS || "").split(/\s+/);
     const scriptRepos = (env.SCRIPT_REPOS || "").split(/\s+/);
@@ -143,14 +163,7 @@ export default {
       console.log(`${label}: ignored`);
       return new Response("Ignored", { status: 202 });
     }
-    const replies = await Promise.all(runs.map((inputs) => fetch(
-      `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/review.yml/dispatches`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.DISPATCH_TOKEN}`,
-          Accept: "application/vnd.github+json", "User-Agent": "kodi-review-relay",
-          "X-GitHub-Api-Version": "2022-11-28" },
-        body: JSON.stringify({ ref: "main", inputs }),
-      })));
+    const replies = await Promise.all(runs.map((inputs) => dispatch(env, "review.yml", inputs)));
     const failed = replies.find((reply) => !reply.ok);
     const modes = runs.map((inputs) => inputs.mode).join(", ");
     console.log(failed ? `${label}: ${modes} not dispatched, ${failed.status} `

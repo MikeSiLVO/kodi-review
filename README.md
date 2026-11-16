@@ -90,10 +90,10 @@ On xbmc/repo-scripts, `@kodi-review` alone from someone with write access review
 | `test_skin.py` | Offline tests: `python3 -m unittest test_skin` |
 | `addon.py` | Fetches the add-on and its copy on the branch, runs kdk's add-on check in its sandbox, adds the pull request's own rules, posts the add-on check |
 | `test_addon.py` | Offline tests: `python3 -m unittest test_addon` |
-| `redeliver.py` | Replays the App's webhook deliveries from the last two hours that never got through, every 10 minutes from `redeliver.yml` |
+| `redeliver.py` | Replays the App's webhook deliveries from the last two hours that never got through, run by `redeliver.yml`, which the relay starts every 10 minutes |
 | `test_redeliver.py` | Offline tests: `python3 -m unittest test_redeliver` |
 | `kdkcheck.py` | Tries a kdk build on pinned real skins through the skin check and diffs it with the last run: `python3 kdkcheck.py` |
-| `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run |
+| `relay/worker.mjs` | The Cloudflare Worker that turns a mention into a review run and starts the redelivery job every 10 minutes |
 | `relay/wrangler.toml` | The Worker's address and settings |
 | `relay/worker.test.mjs` | Worker tests: `node --test relay/worker.test.mjs` |
 | `vendor/` | bubblewrap and socat for Ubuntu 24.04, the kdk and lxml wheels, all checked against `SHA256SUMS` before install, and the hash-pinned clang-format wheels |

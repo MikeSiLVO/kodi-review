@@ -162,6 +162,19 @@ test("a signed mention dispatches the review workflow", async (t) => {
       source: "mention" } });
 });
 
+test("the relay's cron starts the redelivery job", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  });
+  t.mock.method(console, "log", () => {});
+  await worker.scheduled({}, ENV);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /MikeSiLVO\/kodi-review\/actions\/workflows\/redeliver\.yml/);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main" });
+});
+
 test("an unsigned request is refused without dispatching", async (t) => {
   const fetched = t.mock.method(globalThis, "fetch", async () => new Response(null));
   const request = new Request("https://relay.example/github", { method: "POST",

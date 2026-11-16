@@ -7,6 +7,9 @@ routes = [{ pattern = "kodi-review.silvo.cc", custom_domain = true }]
 [observability]
 enabled = true
 
+[triggers]
+crons = ["*/10 * * * *"]
+
 [vars]
 BOT_REPO = "MikeSiLVO/kodi-review"
 ALLOWED_REPOS = "xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins xbmc/repo-scripts MikeSiLVO/repo-scripts"
