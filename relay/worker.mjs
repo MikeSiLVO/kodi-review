@@ -124,18 +124,25 @@ export default {
       return new Response("Not found", { status: 404 });
     }
     const body = await request.text();
+    const delivery = request.headers.get("x-github-delivery") || "no id";
     if (!(await verify(env.WEBHOOK_SECRET, body, request.headers.get("x-hub-signature-256")))) {
+      console.log(`${delivery}: bad signature`);
       return new Response("Bad signature", { status: 401 });
     }
     const event = request.headers.get("x-github-event");
     const payload = JSON.parse(body);
+    const number = payload.pull_request?.number ?? payload.issue?.number ?? "-";
+    const label = `${delivery} ${event}.${payload.action} ${payload.repository?.full_name}#${number}`;
     const allowed = env.ALLOWED_REPOS.split(/\s+/);
     const skinRepos = (env.SKIN_REPOS || "").split(/\s+/);
     const scriptRepos = (env.SCRIPT_REPOS || "").split(/\s+/);
     const asked = trigger(event, payload, allowed, skinRepos, scriptRepos);
     const runs = asked ? [asked] : await followUp(event, payload, allowed,
       (path) => readGitHub(path, env.DISPATCH_TOKEN), skinRepos, scriptRepos);
-    if (!runs) return new Response("Ignored", { status: 202 });
+    if (!runs) {
+      console.log(`${label}: ignored`);
+      return new Response("Ignored", { status: 202 });
+    }
     const replies = await Promise.all(runs.map((inputs) => fetch(
       `https://api.github.com/repos/${env.BOT_REPO}/actions/workflows/review.yml/dispatches`, {
         method: "POST",
@@ -145,6 +152,9 @@ export default {
         body: JSON.stringify({ ref: "main", inputs }),
       })));
     const failed = replies.find((reply) => !reply.ok);
+    const modes = runs.map((inputs) => inputs.mode).join(", ");
+    console.log(failed ? `${label}: ${modes} not dispatched, ${failed.status} `
+      + (await failed.text()).slice(0, 300) : `${label}: dispatched ${modes}`);
     return new Response(failed ? `Dispatch failed: ${failed.status}` : "Dispatched",
       { status: failed ? 502 : 202 });
   },

@@ -4,6 +4,9 @@ compatibility_date = "2026-10-01"
 workers_dev = false
 routes = [{ pattern = "kodi-review.silvo.cc", custom_domain = true }]
 
+[observability]
+enabled = true
+
 [vars]
 BOT_REPO = "MikeSiLVO/kodi-review"
 ALLOWED_REPOS = "xbmc/xbmc MikeSiLVO/xbmc xbmc/repo-skins MikeSiLVO/repo-skins xbmc/repo-scripts MikeSiLVO/repo-scripts"
