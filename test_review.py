@@ -1736,6 +1736,12 @@ class FollowUpTests(unittest.TestCase):
                                 "__typename": "Bot" if login == "kodi-review" else "User"}}
                     for login in logins]}}
 
+    def assert_skips_push(self):
+        """Assert the trigger skips the push with the code the workflow cancels the run on."""
+        with self.assertRaises(SystemExit) as stop:
+            review.cmd_trigger()
+        self.assertEqual(stop.exception.code, review.SKIP_EXIT)
+
     def test_findings_note_a_reply(self):
         """A finding records whether a person replied under it."""
         found = review.earlier_findings([self.thread("kodi-review"),
@@ -1763,7 +1769,7 @@ class FollowUpTests(unittest.TestCase):
                     mock.patch.object(review, "summary_comments", return_value=summaries), \
                     mock.patch.dict(os.environ, {"SOURCE": "push"}):
                 if stops:
-                    self.assertRaises(SystemExit, review.cmd_trigger)
+                    self.assert_skips_push()
                 else:
                     review.cmd_trigger()
 
@@ -1789,7 +1795,7 @@ class FollowUpTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "skin",
                                                  "FORK_PR": "7"}):
                 if stops:
-                    self.assertRaises(SystemExit, review.cmd_trigger)
+                    self.assert_skips_push()
                 else:
                     review.cmd_trigger()
 
@@ -1805,7 +1811,7 @@ class FollowUpTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "skin",
                                                  "FORK_PR": "7"}):
                 if stops:
-                    self.assertRaises(SystemExit, review.cmd_trigger)
+                    self.assert_skips_push()
                 else:
                     review.cmd_trigger()
 
@@ -1824,7 +1830,7 @@ class FollowUpTests(unittest.TestCase):
                     mock.patch.dict(os.environ, {"SOURCE": "push", "MODE": "addon",
                                                  "FORK_PR": "7"}):
                 if stops:
-                    self.assertRaises(SystemExit, review.cmd_trigger)
+                    self.assert_skips_push()
                 else:
                     review.cmd_trigger()
 

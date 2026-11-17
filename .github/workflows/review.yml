@@ -70,6 +70,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: write
     steps:
       - name: Check out the review bot
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,7 +111,16 @@ jobs:
       - name: Check that this run was asked for
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || steps.issue_app.outputs.token }}
-        run: python3 bot/review.py trigger
+          RUN_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          python3 bot/review.py trigger || status=$?
+          # 3 is a push with nothing to run; cancel and wait for it so the run ends grey, not failed
+          if [ "$status" = 3 ]; then
+            GH_TOKEN="$RUN_TOKEN" gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+            sleep 60
+          fi
+          exit "$status"
 
       - name: Post the list of commands
         if: inputs.mode == 'help'

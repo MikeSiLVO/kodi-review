@@ -129,6 +129,7 @@ NO_ANSWER = "I could not finish an answer. Ask again."
 RESOLVE_NOTE = "I can't resolve threads, so this one is yours to close."
 BOT_LOGIN = "kodi-review[bot]"
 RECHECK_LIMIT = 5
+SKIP_EXIT = 3
 KODI22_LINE = re.compile(r"^- \*\*Kodi 22:\*\* (.+)$", re.M)
 INNER_DETAILS = re.compile(r"<details>(?:(?!<details>).)*?</details>", re.S)
 HTML_TAG = re.compile(r"<[^>]+>")
@@ -1475,15 +1476,21 @@ def fetch_comment(path):
         sys.exit("The comment that asked for this run has been deleted.")
 
 
+def skip_push(text):
+    """Skip a push that needs no run, exiting with the code the workflow cancels the run on."""
+    print(text)
+    sys.exit(SKIP_EXIT)
+
+
 def check_recheck():
-    """Check a push may recheck: exit 1 without open findings or at the daily review limit."""
+    """Check a push may recheck: skip it without open findings or at the daily review limit."""
     if not any(f["status"] == "open" for f in earlier_findings(review_threads())):
-        sys.exit("No open findings on this pull request, so a push needs no recheck.")
+        skip_push("No open findings on this pull request, so a push needs no recheck.")
     since = datetime.now(timezone.utc) - timedelta(days=1)
     recent = [c for c in summary_comments()
               if datetime.fromisoformat(c["created_at"].replace("Z", "+00:00")) > since]
     if len(recent) >= RECHECK_LIMIT:
-        sys.exit(f"{len(recent)} reviews in the last day; push rechecks wait for a mention.")
+        skip_push(f"{len(recent)} reviews in the last day; push rechecks wait for a mention.")
 
 
 def pull_mark(head, branch):
@@ -1498,23 +1505,23 @@ def current_pull():
 
 
 def check_skin_recheck():
-    """Check a push may recheck skins: exit 1 on a current check, or on none outside skin repos."""
+    """Check a push may recheck skins: skip it on a current check, or on none outside skin repos."""
     checks = skin_comments()
     if not checks and REPO not in SKIN_REPOS:
-        sys.exit("No skin check here, so a push needs no recheck.")
+        skip_push("No skin check here, so a push needs no recheck.")
     head, mark = current_pull()
     marker = SKIN_MARKER.match(checks[-1]["body"]) if checks else None
     if marker and marker[2] == mark and marker[3].strip() == skin_build():
-        sys.exit(f"The skin check of {head[:12]} is already posted.")
+        skip_push(f"The skin check of {head[:12]} is already posted.")
 
 
 def check_addon_recheck():
-    """Check a push may recheck the add-on: exit 1 on a current check."""
+    """Check a push may recheck the add-on: skip it on a current check."""
     checks = addon_comments()
     head, mark = current_pull()
     marker = ADDON_MARKER.match(checks[-1]["body"]) if checks else None
     if marker and marker[2] == mark and marker[3].strip() == addon_build():
-        sys.exit(f"The add-on check of {head[:12]} is already posted.")
+        skip_push(f"The add-on check of {head[:12]} is already posted.")
 
 
 def replies_to_finding(comment):
@@ -1598,7 +1605,7 @@ def refuse(key, text):
 
 
 def cmd_trigger():
-    """Exit 1 unless allowed; tell refused mentions why, 0 if relay; react to non-help mentions."""
+    """Exit unless allowed; tell refused mentions why, 0 if relay; react to non-help mentions."""
     if os.environ.get("SOURCE") == "push":
         if os.environ.get("MODE") == "skin":
             check_skin_recheck()
