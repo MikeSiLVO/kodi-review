@@ -338,7 +338,7 @@ jobs:
       - name: Review
         id: claude
         if: env.MODE != 'format'
-        uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe # v1.0.269
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
           CLAUDE_CODE_PROMPT_CACHE_TTL: "5m"
