@@ -324,8 +324,10 @@ def addon_result(head_tree, base_tree, folder, release):
     base_run = validate(base_tree, folder, release, out / "base") if base_tree else None
     sides = ["/check/base/kdk.json"] * bool(base_run) + ["/check/head/kdk.json"]
     changes = run_kdk(out, out, "compare", *sides)
+    # a partial head run skips checks; base findings it lacks are not fixes
+    partial = head_run.get("partial")
     rows = [r for r in compared(changes, (head_run, base_run))
-            if not (r["status"] == "fixed" and r["rule"] in RELEASED_RULES)]
+            if not (r["status"] == "fixed" and (partial or r["rule"] in RELEASED_RULES))]
     head_rows = findings(head_run)
     return {**report_facts(head_run, folder), "folder": folder, "release": release,
             "bundled": head_run.get("bundled") or [], "kdk": head_run.get("kdk_version", ""),

@@ -222,6 +222,28 @@ class RenderTests(unittest.TestCase):
         self.assertIn("### Pull request (1)", text)
 
 
+class ResultTests(unittest.TestCase):
+    """The head's findings compared with those of the copy on the branch."""
+
+    def result(self, partial):
+        """Return the add-on result of a head checked whole or in part; the base had no fanart."""
+        fanart = {"rule": "art.no-fanart", "subject": "fanart", "severity": "warning",
+                  "file": "addon.xml", "line": 2, "message": "No fanart"}
+        head = {"addon_id": "script.test", "addon_version": "1.2.0", "partial": partial}
+        base = {"addon_id": "script.test", "addon_version": "1.1.0",
+                "categories": {"Artwork": [fanart]}}
+        changes = {"rows": [{**fanart, "status": "fixed", "count": 1}]}
+        with mock.patch.object(addon, "validate", side_effect=[head, base]), \
+                mock.patch.object(addon, "run_kdk", return_value=changes):
+            return addon.addon_result(Path("head/script.test"), Path("base/script.test"),
+                                      "script.test", "omega")
+
+    def test_partial_head_fixes_nothing(self):
+        """A head kdk checked only in part lists nothing fixed; a fully checked one does."""
+        self.assertEqual(self.result(True)["rows"], [])
+        self.assertEqual(rules(self.result(False)["rows"]), ["art.no-fanart"])
+
+
 def section(path, body="@@ -0,0 +1 @@\n+x\n"):
     """Return one file's section of a git diff."""
     return f"diff --git a/{path} b/{path}\nindex 0..1 100644\n--- a/{path}\n+++ b/{path}\n{body}"
