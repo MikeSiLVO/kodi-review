@@ -348,9 +348,9 @@ def compared(changes, runs):
 
 
 def totals(run):
-    """Return the error, warning and muted counts of a kdk report."""
+    """Return the error, warning, hint and muted counts of a kdk report."""
     return {"errors": run.get("errors", 0), "warnings": run.get("warnings", 0),
-            "muted": run.get("muted", 0)}
+            "hints": run.get("hints", 0), "muted": run.get("muted", 0)}
 
 
 def existing(head_rows, rows):
@@ -932,10 +932,10 @@ def report_text(facts):
         return "\n".join(lines) + "\n"
     for skin in facts.get("skins", []):
         head = skin["head"]
+        counts = ", ".join(plural(head[f"{s}s"], s) for s in SEVERITY_WORDS)
         lines += [f"## {skin['id']} {skin['version']}".rstrip(), "",
                   f"{RELEASE_NAMES.get(skin['release'], skin['release'])}, kdk {skin['kdk']}: "
-                  f"{plural(head['errors'], 'error')}, {plural(head['warnings'], 'warning')}, "
-                  f"{head['muted']} muted.", ""]
+                  f"{counts}, {head['muted']} muted.", ""]
         lines += report_rows(skin)
     text = "\n".join(lines) + "\n"
     if len(text) > REPORT_LIMIT:

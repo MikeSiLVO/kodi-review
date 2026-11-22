@@ -24,15 +24,15 @@ SKIN_ADDON = ('<?xml version="1.0"?><addon id="skin.test" version="1.2.0">'
 PO = "language/resource.language.{}/strings.po"
 
 
-def run(*rows, errors=0, warnings=0, muted=0):
+def run(*rows, errors=0, warnings=0, hints=0, muted=0):
     """Return a kdk report of findings given as (check, severity, file, line, message[, fields])."""
     categories = {}
     for check, severity, file, line, message, *fields in rows:
         item = {"rule": f"{check.split()[0].lower()}.test", "subject": "", "severity": severity,
                 "file": file, "line": line, "message": message, **(fields[0] if fields else {})}
         categories.setdefault(check, []).append(item)
-    return {"kdk_version": "3.0.1", "errors": errors, "warnings": warnings, "muted": muted,
-            "notices": [], "categories": categories}
+    return {"kdk_version": "3.0.1", "errors": errors, "warnings": warnings, "hints": hints,
+            "muted": muted, "notices": [], "categories": categories}
 
 
 def changes(base, head):
@@ -408,7 +408,8 @@ class RenderTests(unittest.TestCase):
         self.assertIn("1 error and 1 warning.\n\nKodi repo findings that block a submission "
                       "count as errors.", text)
         self.assertIn("🔴 <b>1 error, 1 kind</b>", text)
-        self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})
+        self.assertEqual(facts["skins"][0]["head"],
+                         {"errors": 1, "warnings": 1, "hints": 0, "muted": 0})
 
     def test_kdk_marks_the_submission_blockers(self):
         """Only the rules kdk says block a submission are raised, add-on checker ones or not."""
@@ -421,7 +422,8 @@ class RenderTests(unittest.TestCase):
                  {"id": "repo.file-type", "addon_checker": "warning", "blocking_warning": False}]
         with mock.patch.object(skin, "kdk_rules", return_value=rules):
             skin.add_rules(facts, Path("unused"))
-        self.assertEqual(facts["skins"][0]["head"], {"errors": 1, "warnings": 1, "muted": 0})
+        self.assertEqual(facts["skins"][0]["head"],
+                         {"errors": 1, "warnings": 1, "hints": 0, "muted": 0})
         self.assertEqual([r["severity"] for r in facts["skins"][0]["all"]], ["error", "warning"])
 
     def test_clean_update(self):
@@ -548,6 +550,12 @@ class RenderTests(unittest.TestCase):
         self.assertIn("|  | warning | `xml/Font.xml:2` | `Unused font: a` |", report)
         self.assertIn("| new | warning | `xml/Font.xml:9` | `Unused font: b\\|c` |", report)
         self.assertIn("| muted | warning | `xml/a.xml:3` | `Not translated` |", report)
+
+    def test_report_counts_hints(self):
+        """The report's count line names hints beside errors and warnings."""
+        head = run(("XML Validation", "hint", "xml/a.xml", 4, "Redundant <height>"), hints=1)
+        report = skin.report_text(self.facts(None, head))
+        self.assertIn(": 0 errors, 0 warnings, 1 hint, 0 muted.", report)
 
 
 class PostTests(unittest.TestCase):
