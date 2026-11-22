@@ -148,7 +148,7 @@ def count_entry(totals, size):
 
 
 def unpack_zip(archive, target, _dropped=()):
-    """Unpack a zip into a folder without .git, after checking every entry."""
+    """Unpack a zip into a folder without .git, after checking every entry; executables get 755."""
     totals = [0, 0]
     with zipfile.ZipFile(archive) as zf:
         entries = [i for i in zf.infolist() if ".git" not in safe_name(i.filename)]
@@ -167,6 +167,9 @@ def unpack_zip(archive, target, _dropped=()):
             with zf.open(info) as src, open(path, "wb") as out:
                 while chunk := src.read(2**20):
                     out.write(chunk)
+            # kdk's files.executable reads this bit
+            if (info.external_attr >> 16) & stat.S_IXUSR:
+                path.chmod(0o755)
 
 
 def unpack_tar(archive, target, dropped=()):

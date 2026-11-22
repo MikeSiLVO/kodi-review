@@ -159,6 +159,14 @@ class UnpackTests(unittest.TestCase):
                     self.root / "t")
         self.assertTrue((self.root / "t/top/skin.x/addon.xml").is_file())
 
+    def test_keeps_a_zip_execute_bit(self):
+        """A zip entry marked executable stays executable; a plain one doesn't gain the bit."""
+        skin.unpack(self.zipped([("skin.x/run.sh", "x", stat.S_IFREG | 0o755),
+                                 ("skin.x/addon.xml", SKIN_ADDON, stat.S_IFREG | 0o644)]),
+                    self.root / "z")
+        self.assertTrue((self.root / "z/skin.x/run.sh").stat().st_mode & stat.S_IXUSR)
+        self.assertFalse((self.root / "z/skin.x/addon.xml").stat().st_mode & stat.S_IXUSR)
+
     def test_leaves_out_git_folders(self):
         """A download's .git folder is left out, keeping a stranger's git config off the runner."""
         file = stat.S_IFREG | 0o644
