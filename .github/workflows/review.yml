@@ -325,7 +325,7 @@ jobs:
           jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
           for _ in $(seq 120); do
             state=$(gh api "$jobs" --jq '.jobs[] | select(.name == "trigger")
-              | "\(.status) \(.conclusion)"')
+              | "\(.status) \(.conclusion)"') || state=""
             case "$state" in
               "completed success") exit 0 ;;
               completed*) echo "The trigger check did not pass: $state"; exit 1 ;;
@@ -497,7 +497,7 @@ jobs:
           jobs="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs"
           for _ in $(seq 120); do
             state=$(gh api "$jobs" --jq '.jobs[] | select(.name == "trigger")
-              | "\(.status) \(.conclusion)"')
+              | "\(.status) \(.conclusion)"') || state=""
             case "$state" in
               "completed success") exit 0 ;;
               completed*) echo "The trigger check did not pass: $state"; exit 1 ;;
