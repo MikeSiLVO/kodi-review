@@ -165,41 +165,54 @@ def check(name, case, work):
 
 
 def summary(facts):
-    """Reduce a case's facts to counts per status and rule and the rows behind them."""
+    """Reduce a case's facts to counts per status, rule and severity and the rows behind them."""
     if "error" in facts:
         return {"error": facts["error"]}
     skins = {}
     for result in facts["skins"]:
         counts = Counter()
         for row in result["rows"]:
-            counts[f"{row['status']} {row['rule']}"] += row["count"]
-        for _check, rule, _severity, n in result.get("existing", []):
-            counts[f"there {rule}"] += n
-        rows = sorted({json.dumps([r["status"], r["rule"], r["file"], r["line"], r["subject"],
-                                   r["message"], r.get("files", [])]) for r in result["rows"]})
+            counts[f"{row['status']} {row['rule']} {row['severity']}"] += row["count"]
+        for _check, rule, severity, n in result.get("existing", []):
+            counts[f"there {rule} {severity}"] += n
+        rows = sorted({json.dumps([r["status"], r["rule"], r["severity"], r["file"], r["line"],
+                                   r["subject"], r["message"], r.get("files", [])])
+                       for r in result["rows"]})
         text = skin.skin_text({**facts, "skins": [result]})
         skins[result["id"]] = {"verdict": text.split("\n\n")[1], "notices": result["notices"],
                                "counts": dict(counts), "rows": rows}
-    return {"skins": skins, "info_source": facts["info_source"]}
+    return {"format": 2, "skins": skins, "info_source": facts["info_source"]}
+
+
+def without_severity(part):
+    """Return a skin's summary with severity dropped, to match saved runs that lack it."""
+    counts = Counter()
+    for key, n in part.get("counts", {}).items():
+        counts[key.rsplit(" ", 1)[0]] += n
+    rows = sorted({json.dumps([r[0], r[1], *r[3:]]) for r in map(json.loads, part.get("rows", []))})
+    return {**part, "counts": dict(counts), "rows": rows}
 
 
 def changes(before, after):
-    """List what changed between two runs of a case, per rule and per finding."""
+    """List what changed between two runs of a case, per rule and severity and per finding."""
     if "error" in before or "error" in after:
         same = before.get("error") == after.get("error")
         return [] if same else [f"- error: {before.get('error')} -> {after.get('error')}"]
     lines = []
     for sid in sorted(set(before["skins"]) | set(after["skins"])):
         old, new = before["skins"].get(sid, {}), after["skins"].get(sid, {})
+        if "format" not in before and new:
+            new = without_severity(new)
         was, now = old.get("counts", {}), new.get("counts", {})
         lines += [f"- {key}: {was.get(key, 0)} -> {now.get(key, 0)}"
                   for key in sorted(set(was) | set(now)) if was.get(key, 0) != now.get(key, 0)]
         for mark, rows in (("-", set(old.get("rows", [])) - set(new.get("rows", []))),
                            ("+", set(new.get("rows", [])) - set(old.get("rows", [])))):
             for row in sorted(rows)[:SHOWN]:
-                status, rule, file, line, subject, message, files = json.loads(row)
+                status, rule, *severity, file, line, subject, message, files = json.loads(row)
                 where = f"{file}:{line}" + (f" (+{len(files) - 1} files)" if files else "")
-                lines.append(f"  {mark} {status} {rule} {where} [{subject}] {message}")
+                kind = " ".join([status, rule, *severity])
+                lines.append(f"  {mark} {kind} {where} [{subject}] {message}")
             if len(rows) > SHOWN:
                 lines.append(f"  {mark} and {len(rows) - SHOWN} more")
     return lines
