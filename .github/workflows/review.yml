@@ -89,7 +89,7 @@ jobs:
       - name: Get an App token
         id: app
         if: inputs.source != 'issue'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
@@ -100,7 +100,7 @@ jobs:
       - name: Get an App token for an issue
         id: issue_app
         if: inputs.source == 'issue'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
@@ -338,7 +338,7 @@ jobs:
       - name: Review
         id: claude
         if: env.MODE != 'format'
-        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
+        uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
           CLAUDE_CODE_PROMPT_CACHE_TTL: "5m"
@@ -458,7 +458,7 @@ jobs:
       - name: Get an App token
         id: app
         if: ${{ !inputs.dry_run && inputs.sha == '' }}
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
@@ -589,7 +589,7 @@ jobs:
       - name: Get an App token
         id: app
         if: ${{ !inputs.dry_run && inputs.source != 'issue' }}
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
@@ -600,7 +600,7 @@ jobs:
       - name: Get an App token for an issue
         id: issue_app
         if: ${{ !inputs.dry_run && inputs.source == 'issue' }}
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
           client-id: ${{ vars.KODI_REVIEW_CLIENT_ID }}
           private-key: ${{ secrets.KODI_REVIEW_APP_KEY }}
