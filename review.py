@@ -1670,7 +1670,7 @@ def cmd_trigger():
         if head in posted:
             refuse(f"format sha={head}",
                    f"The formatting check of `{head[:12]}` is already posted.")
-    elif asked != "help":
+    elif asked != "help" and os.environ.get("FORCE") != "1":
         login = (comment.get("user") or {}).get("login", "")
         try:
             access = request("GET", f"/repos/{REPO}/collaborators/{login}/permission")["permission"]

@@ -1004,7 +1004,7 @@ class TriggerTests(unittest.TestCase):
 
     def run_trigger(self, comment, access: str | None = "write", asker="issue/5", mode="review",
                     posted=(), skins=(), source="mention", build="kdk=1 style=a", thread=None,
-                    told=(), addons=(), base="omega"):
+                    told=(), addons=(), base="omega", force=False):
         """Run the trigger command on fake replies; return the requests and exit code."""
         calls, refusals = [], []
 
@@ -1044,7 +1044,7 @@ class TriggerTests(unittest.TestCase):
                 mock.patch.object(review, "skin_build", return_value=build), \
                 mock.patch.object(review, "addon_build", return_value=build), \
                 mock.patch.dict(os.environ, {"COMMENT": asker, "FORK_PR": "7", "MODE": mode,
-                                             "SOURCE": source}):
+                                             "SOURCE": source, "FORCE": "1" if force else ""}):
             try:
                 review.cmd_trigger()
             except SystemExit as stop:
@@ -1278,6 +1278,17 @@ class TriggerTests(unittest.TestCase):
             self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/7/comments"))
         calls, code = self.run_trigger(self.comment(), "read", told=["access review"])
         self.assertEqual(calls[-1], ("POST", f"/repos/{review.REPO}/issues/comments/5/reactions"))
+
+    def test_forced_run_takes_the_ask_without_write_access(self):
+        """A forced hand dispatch runs a reader's review or addon again ask and reacts with 👀."""
+        with mock.patch.object(review, "REPO", "xbmc/repo-scripts"):
+            for body, mode in (("@kodi-review", "review"), ("@kodi-review addon again", "addon")):
+                calls, code = self.run_trigger(self.comment(body=body), access="read", mode=mode,
+                                               addons=["a" * 40], force=True)
+                self.assertIsNone(code, body)
+                self.assertFalse(any(path.endswith("/permission") for _, path in calls))
+                self.assertEqual(calls[-1],
+                                 ("POST", "/repos/xbmc/repo-scripts/issues/comments/5/reactions"))
 
     def test_low_access_reply_under_a_finding_is_not_told(self):
         """A reply without a mention from someone without write access ends in silence."""

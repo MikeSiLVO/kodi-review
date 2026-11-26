@@ -13,11 +13,7 @@ Reviews are posted by the [kodi-review](https://github.com/apps/kodi-review) Git
    mention inside code, a quote or an HTML comment does not count, and a command counts only
    when the mention opens the comment.
 
-   `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the
-   repository (xbmc/xbmc by default), the effort level (xhigh by default), a dry run that writes
-   the review to the run's summary page instead of posting it, and a commit for a blind replay,
-   which reviews the pull request as it stood then, without its discussion or status, and also
-   posts nothing.
+   `review.yml` can also be dispatched by hand with a pull request number. Optional inputs: the repository (xbmc/xbmc by default), the effort level (xhigh by default), a dry run that writes the review to the run's summary page instead of posting it, and a commit for a blind replay, which reviews the pull request as it stood then, without its discussion or status, and also posts nothing. With the asking comment named, `force` runs its ask even when its author lacks write access, and the comment gets the 👀 as for any mention.
 2. Each finding is posted as a line comment, and the summary is posted at the end of the
    conversation, hiding the earlier ones as outdated. A later run reviews only what changed since
    the last review, even after a force push, marks the findings the code has fixed, and does not

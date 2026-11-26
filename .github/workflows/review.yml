@@ -31,6 +31,11 @@ on:
         description: "Comment that asked for the review, as issue/ID or review/ID"
         required: false
         type: string
+      force:
+        description: "Hand dispatch only: run the comment's ask without its author's write access"
+        required: false
+        type: boolean
+        default: false
       mode:
         description: "Set by the relay: review (one queue), answer, help or refuse (a queue per comment), format, skin or addon (own queues, no model)"
         required: false
@@ -112,6 +117,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || steps.issue_app.outputs.token }}
           RUN_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force && '1' || '' }}
         run: |
           status=0
           python3 bot/review.py trigger || status=$?
