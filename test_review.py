@@ -530,8 +530,8 @@ class SettledVerdictTests(unittest.TestCase):
         self.assertEqual(self.settle("Ready to merge", ["Minor", "Moderate"]), "Needs more work")
 
     def test_small_fixes(self):
-        """Merge after small fixes needs findings, all of them Minor."""
-        self.assertEqual(self.settle("Merge after small fixes"), "Ready to merge")
+        """Small fixes stand with no findings; a worse finding raises them to more work."""
+        self.assertEqual(self.settle("Merge after small fixes"), "Merge after small fixes")
         self.assertEqual(self.settle("Merge after small fixes", ["Minor", "Moderate"]),
                          "Needs more work")
 

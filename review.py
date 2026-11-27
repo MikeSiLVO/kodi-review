@@ -1308,8 +1308,6 @@ def settled_verdict(result, status):
     if verdict == "Ready to merge" and findings:
         minor = all(f["severity"] == "Minor" for f in findings)
         verdict = "Merge after small fixes" if minor else "Needs more work"
-    elif verdict == "Merge after small fixes" and not findings:
-        verdict = "Ready to merge"
     elif verdict == "Merge after small fixes" and any(f["severity"] != "Minor" for f in findings):
         verdict = "Needs more work"
     if verdict == "Ready to merge":
